@@ -1,8 +1,63 @@
-# Code Agent SDK for C++
+# Autohand Code Agent SDK for C++
 
-Modern C++20 SDK for controlling Autohand code agents through the CLI JSON-RPC mode.
+Modern C++20 SDK for building applications that control Autohand code agents through the Autohand CLI JSON-RPC mode.
+
+**Documentation:** https://autohand.ai/docs/agent-sdk/
 
 **Beta:** this SDK is actively evolving while the Agent SDK APIs stabilize. Pin versions in production and review release notes before upgrading.
+
+## What It Does
+
+The C++ SDK wraps the existing Autohand CLI process and exposes a small host-friendly API:
+
+```text
+C++ app -> autohand::sdk -> Autohand CLI subprocess -> provider -> model
+```
+
+Use it when you want Autohand inside native developer tools, editors, desktop apps, automation services, or CI utilities without reimplementing the CLI agent protocol.
+
+## Features
+
+- C++20 API with value-oriented configuration
+- CMake target: `autohand::sdk`
+- CLI subprocess transport over JSON-RPC 2.0
+- Typed event helpers for message deltas, tools, permissions, and errors
+- High-level `Agent` and `Run` workflow
+- Low-level `AutohandSdk` control methods
+- Structured JSON extraction helper
+- Example parity with the TypeScript SDK examples
+
+## Requirements
+
+- C++20 compiler
+- CMake 3.22 or later
+- POSIX runtime for the initial transport implementation
+- Autohand CLI installed and authenticated
+- A configured provider in `~/.autohand/config.json`, or environment variables accepted by the CLI
+
+Set `AUTOHAND_CLI_PATH` when you want to force a local CLI binary:
+
+```bash
+export AUTOHAND_CLI_PATH=/path/to/autohand
+```
+
+## Installation
+
+Use the repository as a CMake dependency:
+
+```cmake
+include(FetchContent)
+
+FetchContent_Declare(
+  autohand_sdk
+  GIT_REPOSITORY https://github.com/autohandai/code-agent-sdk-cpp.git
+  GIT_TAG main
+)
+
+FetchContent_MakeAvailable(autohand_sdk)
+
+target_link_libraries(my_app PRIVATE autohand::sdk)
+```
 
 ## Quick Start
 
@@ -11,20 +66,83 @@ Modern C++20 SDK for controlling Autohand code agents through the CLI JSON-RPC m
 #include <iostream>
 
 int main() {
-  autohand::Agent agent(autohand::Config::from_environment()
-    .with_instructions("Review code with senior C++ judgement."));
+  autohand::Agent agent(
+      autohand::Config::from_environment()
+          .with_cwd(".")
+          .with_instructions("Review code with senior C++ judgement."));
 
-  auto run = agent.send("Summarize this repository");
+  auto run = agent.send("Review this repository for release readiness.");
+
   run.stream([](const autohand::SdkEvent& event) {
     if (event.type == "message_update") {
       std::cout << event.text_delta();
+    } else if (event.type == "permission_request") {
+      std::cerr << "\npermission requested: " << event.description() << "\n";
     }
   });
 
   auto result = run.wait();
-  std::cout << result.text << "\n";
+  std::cout << "\nRun " << result.id << " finished with " << result.status << "\n";
 }
 ```
+
+## Low-Level Control
+
+Use `AutohandSdk` when your host needs direct access to the JSON-RPC control surface:
+
+```cpp
+#include <autohand/sdk.hpp>
+#include <iostream>
+
+int main() {
+  autohand::AutohandSdk sdk(autohand::Config::from_environment().with_cwd("."));
+  sdk.start();
+  sdk.set_plan_mode(true);
+
+  sdk.stream_prompt("Create a discovery plan for this SDK change.", [](const autohand::SdkEvent& event) {
+    std::cout << event.type << "\n";
+  });
+
+  sdk.stop();
+}
+```
+
+## Examples
+
+The `examples/` directory mirrors the TypeScript SDK example inventory:
+
+- `01-hello-agent.cpp`
+- `02-streaming-query.cpp`
+- `03-code-reviewer.cpp`
+- `04-bash-command.cpp`
+- `05-file-editor.cpp`
+- `06-prompt-skills.cpp`
+- `07-direct-skills.cpp`
+- `08-memory-management.cpp`
+- `10-multi-tool-reasoning.cpp`
+- `13-permissions.cpp`
+- `20-sdlc-discovery-plan.cpp`
+- `21-sdlc-gated-implementation.cpp`
+- `22-sdlc-release-readiness.cpp`
+- `23-system-prompts.cpp`
+- `24-high-level-agent.cpp`
+- `25-structured-json.cpp`
+- `basic-agent.cpp`
+- `basic-usage.cpp`
+- `loop-strategies.cpp`
+- `permission-handling.cpp`
+- `sdk-control-features.cpp`
+- `streaming.cpp`
+
+Build and run an example:
+
+```bash
+cmake -S . -B build -DAUTOHAND_BUILD_EXAMPLES=ON
+cmake --build build --target example_01_hello_agent
+./build/example_01_hello_agent
+```
+
+Live examples require an authenticated Autohand CLI and may ask for tool permissions depending on your CLI configuration.
 
 ## Development
 
@@ -34,6 +152,20 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-The `examples/` directory mirrors the TypeScript SDK examples, covering streaming, permissions, structured JSON, plan mode, high-level agents, and SDK control methods.
+The transport tests use a deterministic fake CLI, so the unit suite does not require model credentials.
 
-Live examples require an authenticated Autohand CLI. Set `AUTOHAND_CLI_PATH` to force a local development binary.
+## Other SDKs
+
+- [TypeScript](https://github.com/autohandai/code-agent-sdk-typescript)
+- [Python](https://github.com/autohandai/code-agent-sdk-python)
+- [Go](https://github.com/autohandai/code-agent-sdk-go)
+- [Java](https://github.com/autohandai/code-agent-sdk-java)
+- [Swift](https://github.com/autohandai/code-agent-sdk-swift)
+- [Rust](https://github.com/autohandai/code-agent-sdk-rust)
+- [C#](https://github.com/autohandai/code-agent-sdk-csharp)
+
+## Support
+
+- SDK docs: https://autohand.ai/docs/agent-sdk/
+- Issues: https://github.com/autohandai/code-agent-sdk-cpp/issues
+- Security reports: security@autohand.ai

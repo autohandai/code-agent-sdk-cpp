@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Agent SDK Documentation
+    url: https://autohand.ai/docs/agent-sdk/
+    about: Read the Agent SDK guide and language-specific docs.
+  - name: Autohand Website
+    url: https://autohand.ai/
+    about: Learn more about Autohand.
+  - name: Security Issues
+    url: mailto:security@autohand.ai
+    about: Report security vulnerabilities privately by email.

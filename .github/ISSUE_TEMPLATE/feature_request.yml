@@ -1,0 +1,77 @@
+name: Feature Request
+description: Suggest a C++ SDK feature or improvement
+title: "[Feature]: "
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting an improvement to the Autohand Code Agent SDK for C++.
+        SDK docs: https://autohand.ai/docs/agent-sdk/
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: What workflow, API gap, or integration problem should this solve?
+      placeholder: I am trying to...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: Describe the API or behavior you would like.
+      placeholder: I would like the SDK to...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Feature category
+      options:
+        - Public API design
+        - Streaming events
+        - Permissions
+        - Structured JSON
+        - CLI transport
+        - Examples
+        - Documentation
+        - Packaging or distribution
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: importance
+    attributes:
+      label: Importance
+      options:
+        - Nice to have
+        - Would significantly improve my workflow
+        - Blocking my use of the SDK
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      placeholder: I have tried...
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Add examples, screenshots, links, or related issues.
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      options:
+        - label: I would be willing to help implement this feature.
+        - label: I have searched existing feature requests.
+          required: true

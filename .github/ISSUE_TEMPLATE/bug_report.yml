@@ -1,0 +1,111 @@
+name: Bug Report
+description: Report a C++ SDK bug or unexpected behavior
+title: "[Bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug in the Autohand Code Agent SDK for C++.
+        SDK docs: https://autohand.ai/docs/agent-sdk/
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug description
+      description: What happened?
+      placeholder: Describe the behavior you saw.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Include the smallest C++ snippet, CMake command, example target, or repository steps that reproduce the issue.
+      placeholder: |
+        1. Configure AUTOHAND_CLI_PATH=...
+        2. Run `cmake --build build --target ...`
+        3. See ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      placeholder: I expected...
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      placeholder: Instead...
+    validations:
+      required: true
+
+  - type: input
+    id: sdk-version
+    attributes:
+      label: SDK version or commit
+      placeholder: "0.1.0 or git SHA"
+    validations:
+      required: true
+
+  - type: input
+    id: compiler-version
+    attributes:
+      label: Compiler and CMake versions
+      description: Run `c++ --version` and `cmake --version`
+      placeholder: "Apple clang 15, CMake 3.29"
+    validations:
+      required: true
+
+  - type: input
+    id: cli-version
+    attributes:
+      label: Autohand CLI version
+      description: Run `autohand --version`
+      placeholder: "autohand 0.1.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Linux (x64)
+        - Linux (ARM64)
+        - Windows (x64)
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or error output
+      description: Paste relevant logs. Remove API keys and private data.
+      render: shell
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Relevant configuration
+      description: Paste relevant `~/.autohand/config.json` or SDK configuration with secrets removed.
+      render: json
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I have searched existing issues.
+          required: true
+        - label: I have removed sensitive information from logs and configuration.
+          required: true
