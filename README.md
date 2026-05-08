@@ -144,6 +144,20 @@ cmake --build build --target example_01_hello_agent
 
 Live examples require an authenticated Autohand CLI and may ask for tool permissions depending on your CLI configuration.
 
+## Documentation
+
+- [Getting Started](./docs/getting-started.md)
+- [API Reference](./docs/API_REFERENCE.md)
+- [Configuration](./docs/configuration.md)
+- [Event Streaming](./docs/event-streaming.md)
+- [Permissions](./docs/permissions.md)
+- [Plan Mode](./docs/plan-mode.md)
+- [SDLC Workflows](./docs/sdlc-workflows.md)
+- [Error Handling](./docs/error-handling.md)
+- [Examples](./docs/examples.md)
+- [Contributing](./CONTRIBUTING.md)
+- [Security](./SECURITY.md)
+
 ## Development
 
 ```bash
