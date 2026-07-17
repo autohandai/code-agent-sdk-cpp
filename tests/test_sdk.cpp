@@ -34,6 +34,9 @@ while IFS= read -r line; do
     *autohand.getSupportedCommands*)
       printf '{"jsonrpc":"2.0","id":%s,"result":{"commands":["deep-research","/autoresearch"]}}\n' "$id"
       ;;
+    *autohand.env*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"plan":"%s","apiKey":"%s","baseUrl":"%s"}}\n' "$id" "$AUTOHAND_AI_PLAN" "$AUTOHAND_AI_API_KEY" "$AUTOHAND_AI_BASE_URL"
+      ;;
     *)
       printf '{"jsonrpc":"2.0","id":%s,"result":{"ok":true,"method":"%s"}}\n' "$id" "$method"
       ;;
@@ -55,7 +58,7 @@ int main() {
   auto config = autohand::Config::from_environment()
                     .with_cli_path(make_fake_cli().string())
                     .with_skill("cpp")
-                    .with_model("fantail2");
+                    .with_model("moa");
   auto args = config.cli_args();
   assert(!args.empty());
 
@@ -70,6 +73,16 @@ int main() {
   current_config.agents = "agents.json";
   current_config.plugin_dir = ".autohand/plugins";
   current_config.feature_settings_json = R"({"features":{"slashGoal":true}})";
+  current_config.persist_session = true;
+  current_config.session_id = "session-2";
+  current_config.resume = true;
+  current_config.agents_md_enable = true;
+  current_config.agents_md_create = true;
+  current_config.agents_md_path = "AGENTS.md";
+  current_config.agents_md_auto_update = true;
+  current_config.max_tokens = 40000;
+  current_config.skill_sources = {"team", "local"};
+  current_config.install_missing_skills = true;
   const auto current_args = current_config.cli_args();
   const auto has_arg = [&](const std::string& value) {
     return std::find(current_args.begin(), current_args.end(), value) != current_args.end();
@@ -80,6 +93,15 @@ int main() {
   assert(has_arg("--display-language"));
   assert(has_arg("--mcp-config"));
   assert(has_arg("--plugin-dir"));
+  assert(has_arg("--persist-session"));
+  assert(has_arg("--resume"));
+  assert(has_arg("--agents-md"));
+  assert(has_arg("--agents-md-create"));
+  assert(has_arg("--agents-md-auto-update"));
+  assert(has_arg("--agents-md-path"));
+  assert(has_arg("--max-tokens"));
+  assert(has_arg("--skill-sources"));
+  assert(has_arg("--install-missing-skills"));
 
   autohand::GoalParams goal;
   goal.objective = "Finish parity";
@@ -98,10 +120,27 @@ int main() {
   assert(autohand::format_slash_command(" /deep-research ", " C++ RPC reliability ") ==
          "/deep-research C++ RPC reliability");
 
+  config.provider = "autohandai";
+  config.api_key = "test-key";
+  config.base_url = "https://example.test";
+  config.autohand_ai_plan = "cloud";
   autohand::AutohandSdk sdk(config);
   sdk.start();
   assert(sdk.supports_command("/autoresearch"));
+  const auto environment = sdk.request("autohand.env");
+  assert(autohand::json_get_string(environment, "plan") == "cloud");
+  assert(autohand::json_get_string(environment, "apiKey") == "test-key");
+  assert(autohand::json_get_string(environment, "baseUrl") == "https://example.test");
   assert(autohand::json_get_string(sdk.create_goal(goal), "method") == "autohand.goal.create");
+  assert(autohand::json_get_string(sdk.get_goal(), "method") == "autohand.goal.get");
+  autohand::GoalParams update;
+  update.status = "paused";
+  assert(autohand::json_get_string(sdk.update_goal(update), "method") == "autohand.goal.update");
+  assert(autohand::json_get_string(sdk.clear_goal(), "method") == "autohand.goal.clear");
+  assert(autohand::json_get_string(sdk.queue_goal(goal), "method") == "autohand.goal.queue");
+  assert(autohand::json_get_string(sdk.start_queued_goal(), "method") == "autohand.goal.startQueued");
+  assert(autohand::json_get_string(sdk.list_goal_templates(), "method") ==
+         "autohand.goal.listTemplates");
   assert(autohand::json_get_string(sdk.start_autoresearch(autoresearch), "method") ==
          "autohand.autoresearch.start");
   assert(autohand::json_get_string(sdk.get_autoresearch_status(), "method") ==
@@ -124,6 +163,14 @@ int main() {
          "autohand.autoresearch.stop");
   assert(autohand::event_type_from_method("autohand.autoresearch.event", R"({"operation":"replay"})") ==
          "autoresearch");
+  const auto lifecycle_event = autohand::sdk_event_from_notification(
+      "autohand.autoresearch.status", R"({"active":true,"runsLogged":3})");
+  assert(lifecycle_event.type == "autoresearch");
+  assert(lifecycle_event.autoresearch_phase() == "status");
+  const auto operation_event = autohand::sdk_event_from_notification(
+      "autohand.autoresearch.event", R"({"operation":"replay","phase":"complete"})");
+  assert(operation_event.autoresearch_operation() == "replay");
+  assert(operation_event.autoresearch_phase() == "complete");
   std::string text;
   bool answered_permission = false;
   sdk.stream_prompt("hello", [&](const autohand::SdkEvent& event) {

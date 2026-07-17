@@ -19,13 +19,17 @@ Common fields:
 - `bare`, `idle_logout`, `fork_session`: current long-running runtime controls.
 - `display_language`, prompt-file, MCP, agents, and plugin-directory overrides.
 - `feature_settings_json`: settings applied through RPC immediately after startup.
+- session/AGENTS.md/token/compaction/skill-source settings map to exact current
+  CLI flags.
+- `provider = "autohandai"`, `api_key`, `base_url`, and `autohand_ai_plan`
+  configure Autohand AI without command-line credentials.
 
 Helpers:
 
 ```cpp
 auto config = autohand::Config::from_environment()
     .with_cwd(".")
-    .with_model("fantail2")
+    .with_model("moa")
     .with_skill("cpp")
     .with_instructions("Prefer small, typed C++ APIs.");
 ```

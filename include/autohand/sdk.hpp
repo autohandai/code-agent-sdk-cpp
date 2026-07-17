@@ -51,6 +51,19 @@ struct Config {
   bool bare = false;
   std::optional<bool> idle_logout;
   std::optional<bool> context_compact;
+  std::optional<bool> agents_md_enable;
+  bool agents_md_create = false;
+  std::optional<std::string> agents_md_path;
+  bool agents_md_auto_update = false;
+  bool persist_session = false;
+  std::optional<std::string> session_id;
+  bool resume = false;
+  bool continue_session = false;
+  std::optional<std::string> session_path;
+  std::optional<int> auto_save_interval;
+  std::optional<int> max_tokens;
+  std::optional<double> compression_threshold;
+  std::optional<double> summarization_threshold;
   std::optional<int> max_iterations;
   std::optional<int> max_runtime_minutes;
   std::optional<double> max_cost;
@@ -70,8 +83,14 @@ struct Config {
   std::optional<int> yolo_timeout_seconds;
   std::vector<std::string> additional_directories;
   std::vector<std::string> skills;
+  std::vector<std::string> skill_sources;
+  bool install_missing_skills = false;
   std::vector<std::string> extra_args;
   std::map<std::string, std::string> environment;
+  std::optional<std::string> provider;
+  std::optional<std::string> api_key;
+  std::optional<std::string> base_url;
+  std::optional<std::string> autohand_ai_plan;
 
   static Config from_environment();
   Config& with_cwd(std::string value);
@@ -141,6 +160,8 @@ struct SdkEvent {
   std::string tool_name() const;
   std::string request_id() const;
   std::string description() const;
+  std::string autoresearch_phase() const;
+  std::string autoresearch_operation() const;
 };
 
 struct RunResult {
@@ -272,5 +293,6 @@ std::string json_escape(std::string_view value);
 std::string format_slash_command(const std::string& command, const std::string& args = {});
 std::string json_get_string(const std::string& json, const std::string& key);
 std::string event_type_from_method(const std::string& method, const std::string& params_json);
+SdkEvent sdk_event_from_notification(const std::string& method, const std::string& params_json);
 
 }  // namespace autohand

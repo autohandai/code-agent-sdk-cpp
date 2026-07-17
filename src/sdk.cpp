@@ -86,6 +86,27 @@ void append_json_strings(
   out << ']';
 }
 
+void append_joined(
+    std::vector<std::string>& args,
+    const std::string& flag,
+    const std::vector<std::string>& values) {
+  if (values.empty()) return;
+  args.push_back(flag);
+  std::ostringstream joined;
+  for (std::size_t i = 0; i < values.size(); ++i) {
+    if (i > 0) joined << ',';
+    joined << values[i];
+  }
+  args.push_back(joined.str());
+}
+
+std::string autoresearch_phase_for_method(const std::string& method) {
+  if (method == "autohand.autoresearch.start") return "start";
+  if (method == "autohand.autoresearch.status") return "status";
+  if (method == "autohand.autoresearch.pause") return "pause";
+  return {};
+}
+
 std::string extract_raw_property(const std::string& json, const std::string& key) {
   const std::string marker = "\"" + key + "\":";
   const auto start = json.find(marker);
@@ -176,6 +197,16 @@ Config Config::from_environment() {
   if (const char* cli = std::getenv("AUTOHAND_CLI_PATH")) {
     config.cli_path = cli;
   }
+  if (const char* key = std::getenv("AUTOHAND_AI_API_KEY")) {
+    config.provider = "autohandai";
+    config.api_key = key;
+  }
+  if (const char* url = std::getenv("AUTOHAND_AI_BASE_URL")) {
+    config.base_url = url;
+  }
+  if (const char* plan = std::getenv("AUTOHAND_AI_PLAN")) {
+    config.autohand_ai_plan = plan;
+  }
   return config;
 }
 
@@ -216,11 +247,25 @@ std::vector<std::string> Config::cli_args() const {
   if (auto_mode) args.push_back("--auto-mode");
   if (auto_skill) args.push_back("--auto-skill");
   if (auto_commit) args.push_back("-c");
+  if (persist_session) args.push_back("--persist-session");
+  if (resume) args.push_back("--resume");
+  if (continue_session) args.push_back("--continue");
+  if (agents_md_create) args.push_back("--agents-md-create");
+  if (agents_md_auto_update) args.push_back("--agents-md-auto-update");
+  if (agents_md_enable == true) args.push_back("--agents-md");
+  if (agents_md_enable == false) args.push_back("--no-agents-md");
   if (context_compact == true) args.push_back("--context-compact");
   if (context_compact == false) args.push_back("--no-context-compact");
   append_value(args, "--max-iterations", max_iterations);
   append_value(args, "--max-runtime", max_runtime_minutes);
   append_value(args, "--max-cost", max_cost);
+  append_value(args, "--session-id", session_id);
+  append_value(args, "--session-path", session_path);
+  append_value(args, "--auto-save-interval", auto_save_interval);
+  append_value(args, "--max-tokens", max_tokens);
+  append_value(args, "--compression-threshold", compression_threshold);
+  append_value(args, "--summarization-threshold", summarization_threshold);
+  append_value(args, "--agents-md-path", agents_md_path);
   append_value(args, "--model", model);
   append_value(args, "--temperature", temperature);
   append_value(args, "--sys-prompt", system_prompt);
@@ -234,15 +279,9 @@ std::vector<std::string> Config::cli_args() const {
   append_value(args, "--plugin-dir", plugin_dir);
   append_value(args, "--yolo", yolo);
   append_value(args, "--yolo-timeout", yolo_timeout_seconds);
-  if (!skills.empty()) {
-    args.push_back("--skills");
-    std::ostringstream joined;
-    for (size_t i = 0; i < skills.size(); ++i) {
-      if (i > 0) joined << ",";
-      joined << skills[i];
-    }
-    args.push_back(joined.str());
-  }
+  append_joined(args, "--skills", skills);
+  append_joined(args, "--skill-sources", skill_sources);
+  if (install_missing_skills) args.push_back("--install-missing-skills");
   for (const auto& dir : additional_directories) {
     args.push_back("--add-dir");
     args.push_back(dir);
@@ -343,6 +382,8 @@ std::string SdkEvent::request_id() const {
   return id.empty() ? json_get_string(raw_json, "request_id") : id;
 }
 std::string SdkEvent::description() const { return json_get_string(raw_json, "description"); }
+std::string SdkEvent::autoresearch_phase() const { return json_get_string(raw_json, "phase"); }
+std::string SdkEvent::autoresearch_operation() const { return json_get_string(raw_json, "operation"); }
 
 class AutohandSdk::Impl {
  public:
@@ -381,6 +422,11 @@ class AutohandSdk::Impl {
         chdir(config_.cwd.c_str());
       }
       setenv("AUTOHAND_STREAM_TOOL_OUTPUT", "1", 1);
+      if (config_.provider == "autohandai") {
+        setenv("AUTOHAND_AI_PLAN", config_.autohand_ai_plan.value_or("cloud").c_str(), 1);
+        if (config_.api_key) setenv("AUTOHAND_AI_API_KEY", config_.api_key->c_str(), 1);
+        if (config_.base_url) setenv("AUTOHAND_AI_BASE_URL", config_.base_url->c_str(), 1);
+      }
       for (const auto& [key, value] : config_.environment) {
         setenv(key.c_str(), value.c_str(), 1);
       }
@@ -539,7 +585,7 @@ class AutohandSdk::Impl {
     const auto method = json_get_string(line, "method");
     if (method.empty()) return;
     const auto params = extract_raw_property(line, "params");
-    SdkEvent event{event_type_from_method(method, params), params};
+    auto event = sdk_event_from_notification(method, params);
     {
       std::lock_guard lock(event_mutex_);
       events_.push_back(std::move(event));
@@ -905,6 +951,19 @@ std::string event_type_from_method(const std::string& method, const std::string&
   constexpr std::string_view prefix = "autohand.";
   if (method.rfind(prefix, 0) == 0) return method.substr(prefix.size());
   return method;
+}
+
+SdkEvent sdk_event_from_notification(const std::string& method, const std::string& params_json) {
+  auto normalized_params = params_json;
+  const auto phase = autoresearch_phase_for_method(method);
+  if (!phase.empty() && json_get_string(params_json, "phase").empty()) {
+    if (params_json == "{}" || params_json.empty()) {
+      normalized_params = "{\"phase\":\"" + phase + "\"}";
+    } else if (params_json.front() == '{') {
+      normalized_params = "{\"phase\":\"" + phase + "\"," + params_json.substr(1);
+    }
+  }
+  return SdkEvent{event_type_from_method(method, normalized_params), normalized_params};
 }
 
 }  // namespace autohand
