@@ -48,6 +48,44 @@ std::string make_prompt_json(const std::string& message) {
   return "{\"message\":\"" + json_escape(message) + "\"}";
 }
 
+void append_json_separator(std::ostringstream& out, bool& first) {
+  if (!first) out << ',';
+  first = false;
+}
+
+void append_json_string(std::ostringstream& out, bool& first, const std::string& key, const std::string& value) {
+  append_json_separator(out, first);
+  out << '"' << key << "\":\"" << json_escape(value) << '"';
+}
+
+template <class T>
+void append_json_number(std::ostringstream& out, bool& first, const std::string& key, T value) {
+  append_json_separator(out, first);
+  out << '"' << key << "\":" << value;
+}
+
+void append_json_bool(std::ostringstream& out, bool& first, const std::string& key, bool value) {
+  append_json_separator(out, first);
+  out << '"' << key << "\":" << (value ? "true" : "false");
+}
+
+void append_json_raw(std::ostringstream& out, bool& first, const std::string& key, const std::string& value) {
+  append_json_separator(out, first);
+  out << '"' << key << "\":" << value;
+}
+
+void append_json_strings(
+    std::ostringstream& out, bool& first, const std::string& key, const std::vector<std::string>& values) {
+  if (values.empty()) return;
+  append_json_separator(out, first);
+  out << '"' << key << "\":[";
+  for (std::size_t i = 0; i < values.size(); ++i) {
+    if (i > 0) out << ',';
+    out << '"' << json_escape(values[i]) << '"';
+  }
+  out << ']';
+}
+
 std::string extract_raw_property(const std::string& json, const std::string& key) {
   const std::string marker = "\"" + key + "\":";
   const auto start = json.find(marker);
@@ -172,6 +210,8 @@ Config& Config::with_instructions(std::string value) {
 
 std::vector<std::string> Config::cli_args() const {
   std::vector<std::string> args{"--mode", "rpc"};
+  if (bare) args.push_back("--bare");
+  if (idle_logout == false) args.push_back("--no-idle-logout");
   if (unrestricted) args.push_back("--unrestricted");
   if (auto_mode) args.push_back("--auto-mode");
   if (auto_skill) args.push_back("--auto-skill");
@@ -185,6 +225,13 @@ std::vector<std::string> Config::cli_args() const {
   append_value(args, "--temperature", temperature);
   append_value(args, "--sys-prompt", system_prompt);
   append_value(args, "--append-sys-prompt", append_system_prompt);
+  append_value(args, "--fork", fork_session);
+  append_value(args, "--display-language", display_language);
+  append_value(args, "--system-prompt-file", system_prompt_file);
+  append_value(args, "--append-system-prompt-file", append_system_prompt_file);
+  append_value(args, "--mcp-config", mcp_config);
+  append_value(args, "--agents", agents);
+  append_value(args, "--plugin-dir", plugin_dir);
   append_value(args, "--yolo", yolo);
   append_value(args, "--yolo-timeout", yolo_timeout_seconds);
   if (!skills.empty()) {
@@ -202,6 +249,63 @@ std::vector<std::string> Config::cli_args() const {
   }
   args.insert(args.end(), extra_args.begin(), extra_args.end());
   return args;
+}
+
+std::string GoalParams::to_json() const {
+  std::ostringstream out;
+  bool first = true;
+  out << '{';
+  if (objective) append_json_string(out, first, "objective", *objective);
+  if (status) append_json_string(out, first, "status", *status);
+  if (token_budget) append_json_number(out, first, "token_budget", *token_budget);
+  if (time_budget_seconds) append_json_number(out, first, "time_budget_seconds", *time_budget_seconds);
+  if (min_tokens_before_wrap_up) {
+    append_json_number(out, first, "min_tokens_before_wrap_up", *min_tokens_before_wrap_up);
+  }
+  if (min_time_seconds_before_wrap_up) {
+    append_json_number(out, first, "min_time_seconds_before_wrap_up", *min_time_seconds_before_wrap_up);
+  }
+  out << '}';
+  return out.str();
+}
+
+std::string AutoresearchSubagentOptions::to_json() const {
+  std::ostringstream out;
+  bool first = true;
+  out << '{';
+  if (idea_generation) append_json_bool(out, first, "ideaGeneration", *idea_generation);
+  if (measurement_analysis) append_json_bool(out, first, "measurementAnalysis", *measurement_analysis);
+  if (finalization) append_json_bool(out, first, "finalization", *finalization);
+  out << '}';
+  return out.str();
+}
+
+std::string AutoresearchStartParams::to_json() const {
+  if (objective.empty()) throw SdkError("autoresearch objective must not be empty");
+  std::ostringstream out;
+  bool first = true;
+  out << '{';
+  append_json_string(out, first, "objective", objective);
+  if (max_iterations) append_json_number(out, first, "maxIterations", *max_iterations);
+  if (timeout_ms) append_json_number(out, first, "timeoutMs", *timeout_ms);
+  if (metric_name) append_json_string(out, first, "metricName", *metric_name);
+  if (metric_unit) append_json_string(out, first, "metricUnit", *metric_unit);
+  if (direction) append_json_string(out, first, "direction", *direction);
+  if (measure_command) append_json_string(out, first, "measureCommand", *measure_command);
+  if (measure_script) append_json_string(out, first, "measureScript", *measure_script);
+  if (checks_command) append_json_string(out, first, "checksCommand", *checks_command);
+  if (checks_script) append_json_string(out, first, "checksScript", *checks_script);
+  append_json_strings(out, first, "filesInScope", files_in_scope);
+  if (subagents) append_json_raw(out, first, "subagents", subagents->to_json());
+  if (secondary_objectives_json) {
+    append_json_raw(out, first, "secondaryObjectives", *secondary_objectives_json);
+  }
+  if (constraints_json) append_json_raw(out, first, "constraints", *constraints_json);
+  if (sampling_json) append_json_raw(out, first, "sampling", *sampling_json);
+  if (retention_json) append_json_raw(out, first, "retention", *retention_json);
+  append_json_strings(out, first, "environmentAllowlist", environment_allowlist);
+  out << '}';
+  return out.str();
 }
 
 std::string PromptOptions::to_json(std::string_view message) const {
@@ -299,6 +403,9 @@ class AutohandSdk::Impl {
     started_ = true;
     stdout_thread_ = std::thread([this] { read_stdout(); });
     stderr_thread_ = std::thread([this] { read_stderr(); });
+    if (config_.feature_settings_json) {
+      (void)request("autohand.applyFlagSettings", "{\"settings\":" + *config_.feature_settings_json + "}");
+    }
   }
 
   void stop() {
@@ -505,6 +612,77 @@ std::string AutohandSdk::set_model(const std::string& model) {
 }
 std::string AutohandSdk::get_state() { return request("autohand.getState"); }
 std::string AutohandSdk::get_messages() { return request("autohand.getMessages"); }
+std::string AutohandSdk::get_supported_commands() { return request("autohand.getSupportedCommands"); }
+bool AutohandSdk::supports_command(const std::string& command) {
+  const auto normalized = format_slash_command(command);
+  const auto plain = normalized.substr(1);
+  const auto result = get_supported_commands();
+  return result.find("\"" + normalized + "\"") != std::string::npos ||
+         result.find("\"" + plain + "\"") != std::string::npos;
+}
+void AutohandSdk::stream_command(
+    const std::string& command,
+    const std::string& args,
+    const std::function<void(const SdkEvent&)>& on_event,
+    const PromptOptions& options) {
+  stream_prompt(format_slash_command(command, args), on_event, options);
+}
+std::string AutohandSdk::apply_flag_settings(const std::string& settings_json) {
+  return request("autohand.applyFlagSettings", "{\"settings\":" + settings_json + "}");
+}
+std::string AutohandSdk::get_goal() { return request("autohand.goal.get"); }
+std::string AutohandSdk::create_goal(const GoalParams& params) {
+  return request("autohand.goal.create", params.to_json());
+}
+std::string AutohandSdk::update_goal(const GoalParams& params) {
+  return request("autohand.goal.update", params.to_json());
+}
+std::string AutohandSdk::clear_goal() { return request("autohand.goal.clear"); }
+std::string AutohandSdk::queue_goal(const GoalParams& params) {
+  return request("autohand.goal.queue", params.to_json());
+}
+std::string AutohandSdk::start_queued_goal() { return request("autohand.goal.startQueued"); }
+std::string AutohandSdk::list_goal_templates() { return request("autohand.goal.listTemplates"); }
+std::string AutohandSdk::start_autoresearch(const AutoresearchStartParams& params) {
+  return request("autohand.autoresearch.start", params.to_json());
+}
+std::string AutohandSdk::get_autoresearch_status() {
+  return request("autohand.autoresearch.status");
+}
+std::string AutohandSdk::stop_autoresearch() { return request("autohand.autoresearch.stop"); }
+std::string AutohandSdk::get_autoresearch_history() {
+  return request("autohand.autoresearch.history");
+}
+std::string AutohandSdk::replay_autoresearch(const std::string& attempt_id, const std::string& evaluator) {
+  return request("autohand.autoresearch.replay",
+                 "{\"attemptId\":\"" + json_escape(attempt_id) + "\",\"evaluator\":\"" +
+                     json_escape(evaluator) + "\"}");
+}
+std::string AutohandSdk::rescore_autoresearch(const std::string& attempt_id) {
+  return request("autohand.autoresearch.rescore", "{\"attemptId\":\"" + json_escape(attempt_id) + "\"}");
+}
+std::string AutohandSdk::rescore_all_autoresearch() {
+  return request("autohand.autoresearch.rescore", "{\"all\":true}");
+}
+std::string AutohandSdk::compare_autoresearch(
+    const std::string& left_attempt_id, const std::string& right_attempt_id) {
+  return request("autohand.autoresearch.compare",
+                 "{\"leftAttemptId\":\"" + json_escape(left_attempt_id) + "\",\"rightAttemptId\":\"" +
+                     json_escape(right_attempt_id) + "\"}");
+}
+std::string AutohandSdk::get_autoresearch_pareto() {
+  return request("autohand.autoresearch.pareto");
+}
+std::string AutohandSdk::pin_autoresearch(const std::string& attempt_id, bool pinned) {
+  return request("autohand.autoresearch.pin",
+                 "{\"attemptId\":\"" + json_escape(attempt_id) + "\",\"pinned\":" +
+                     (pinned ? "true}" : "false}"));
+}
+std::string AutohandSdk::prune_autoresearch(bool dry_run, bool yes) {
+  return request("autohand.autoresearch.prune",
+                 std::string("{\"dryRun\":") + (dry_run ? "true" : "false") +
+                     ",\"yes\":" + (yes ? "true}" : "false}"));
+}
 std::string AutohandSdk::permission_response(const std::string& request_id, const std::string& decision) {
   return request("autohand.permissionResponse",
                  "{\"requestId\":\"" + json_escape(request_id) + "\",\"decision\":\"" +
@@ -546,6 +724,15 @@ Agent::Agent(Config config) : sdk_(std::move(config)) { sdk_.start(); }
 Run Agent::send(std::string prompt, PromptOptions options) {
   return Run(sdk_, std::move(prompt), std::move(options));
 }
+Run Agent::command(std::string command_name, std::string args, PromptOptions options) {
+  return send(format_slash_command(command_name, args), std::move(options));
+}
+Run Agent::deep_research(std::string topic, PromptOptions options) {
+  return command("/deep-research", std::move(topic), std::move(options));
+}
+Run Agent::autoresearch(std::string objective, PromptOptions options) {
+  return command("/autoresearch", std::move(objective), std::move(options));
+}
 RunResult Agent::run(std::string prompt, PromptOptions options) {
   auto run = send(std::move(prompt), std::move(options));
   return run.wait();
@@ -560,6 +747,38 @@ void Agent::deny_permission(const std::string& request_id) {
   (void)sdk_.permission_response(request_id, "deny_once");
 }
 void Agent::set_plan_mode(bool enabled) { (void)sdk_.set_plan_mode(enabled); }
+bool Agent::supports_command(const std::string& command_name) { return sdk_.supports_command(command_name); }
+std::string Agent::get_goal() { return sdk_.get_goal(); }
+std::string Agent::create_goal(const GoalParams& params) { return sdk_.create_goal(params); }
+std::string Agent::update_goal(const GoalParams& params) { return sdk_.update_goal(params); }
+std::string Agent::clear_goal() { return sdk_.clear_goal(); }
+std::string Agent::queue_goal(const GoalParams& params) { return sdk_.queue_goal(params); }
+std::string Agent::start_queued_goal() { return sdk_.start_queued_goal(); }
+std::string Agent::list_goal_templates() { return sdk_.list_goal_templates(); }
+std::string Agent::start_autoresearch(const AutoresearchStartParams& params) {
+  return sdk_.start_autoresearch(params);
+}
+std::string Agent::get_autoresearch_status() { return sdk_.get_autoresearch_status(); }
+std::string Agent::stop_autoresearch() { return sdk_.stop_autoresearch(); }
+std::string Agent::get_autoresearch_history() { return sdk_.get_autoresearch_history(); }
+std::string Agent::replay_autoresearch(const std::string& attempt_id, const std::string& evaluator) {
+  return sdk_.replay_autoresearch(attempt_id, evaluator);
+}
+std::string Agent::rescore_autoresearch(const std::string& attempt_id) {
+  return sdk_.rescore_autoresearch(attempt_id);
+}
+std::string Agent::rescore_all_autoresearch() { return sdk_.rescore_all_autoresearch(); }
+std::string Agent::compare_autoresearch(
+    const std::string& left_attempt_id, const std::string& right_attempt_id) {
+  return sdk_.compare_autoresearch(left_attempt_id, right_attempt_id);
+}
+std::string Agent::get_autoresearch_pareto() { return sdk_.get_autoresearch_pareto(); }
+std::string Agent::pin_autoresearch(const std::string& attempt_id, bool pinned) {
+  return sdk_.pin_autoresearch(attempt_id, pinned);
+}
+std::string Agent::prune_autoresearch(bool dry_run, bool yes) {
+  return sdk_.prune_autoresearch(dry_run, yes);
+}
 void Agent::close() { sdk_.stop(); }
 
 std::string parse_json_text(const std::string& text) {
@@ -630,6 +849,21 @@ std::string json_escape(std::string_view value) {
   return out.str();
 }
 
+std::string format_slash_command(const std::string& command, const std::string& args) {
+  auto normalized = command;
+  normalized.erase(0, normalized.find_first_not_of(" \t\r\n"));
+  const auto last = normalized.find_last_not_of(" \t\r\n");
+  if (last != std::string::npos) normalized.erase(last + 1);
+  if (normalized.empty() || normalized.front() != '/' || normalized.find_first_of(" \t\r\n") != std::string::npos) {
+    throw SdkError("invalid slash command: " + command);
+  }
+  auto normalized_args = args;
+  normalized_args.erase(0, normalized_args.find_first_not_of(" \t\r\n"));
+  const auto args_last = normalized_args.find_last_not_of(" \t\r\n");
+  if (args_last != std::string::npos) normalized_args.erase(args_last + 1);
+  return normalized_args.empty() ? normalized : normalized + " " + normalized_args;
+}
+
 std::string json_get_string(const std::string& json, const std::string& key) {
   const std::regex re("\"" + key + "\"\\s*:\\s*\"((?:\\\\.|[^\"])*)\"");
   std::smatch match;
@@ -666,6 +900,7 @@ std::string event_type_from_method(const std::string& method, const std::string&
   if (method == "autohand.toolUpdate") return "tool_update";
   if (method == "autohand.toolEnd") return "tool_end";
   if (method == "autohand.permissionRequest") return "permission_request";
+  if (method.rfind("autohand.autoresearch.", 0) == 0) return "autoresearch";
   if (method == "autohand.error") return "error";
   constexpr std::string_view prefix = "autohand.";
   if (method.rfind(prefix, 0) == 0) return method.substr(prefix.size());

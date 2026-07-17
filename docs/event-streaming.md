@@ -21,6 +21,10 @@ sdk.stream_prompt("Explain closures in one sentence.", [](const autohand::SdkEve
 - `tool_end`: a tool completed.
 - `permission_request`: host approval is required.
 - `error`: agent or transport error.
+- `turn_end`: includes raw `tokensUsed`, `tokensUsageStatus`, `durationMs`, and
+  `contextPercent` fields when the CLI reports them.
+- `autoresearch`: lifecycle and ledger-operation notifications. Inspect
+  `raw_json` for `phase`, `operation`, `attemptId`, `success`, and retention data.
 
 ## Handling Permissions While Streaming
 

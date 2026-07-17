@@ -24,6 +24,7 @@ Use it when you want Autohand inside native developer tools, editors, desktop ap
 - Typed event helpers for message deltas, tools, permissions, and errors
 - High-level `Agent` and `Run` workflow
 - Low-level `AutohandSdk` control methods
+- Slash-command helpers, persistent goals, and the replayable autoresearch ledger
 - Structured JSON extraction helper
 - Example parity with the TypeScript SDK examples
 
@@ -107,6 +108,29 @@ int main() {
 }
 ```
 
+## Replayable Autoresearch
+
+The C++ SDK matches the TypeScript v1.0.3 autoresearch RPC surface while using
+value-oriented C++ parameter types:
+
+```cpp
+autohand::AutoresearchStartParams params{"Reduce test runtime without regressions"};
+params.metric_name = "total_ms";
+params.metric_unit = "ms";
+params.direction = "lower";
+params.measure_command = "ctest --test-dir build";
+params.max_iterations = 12;
+
+auto started = agent.start_autoresearch(params);
+auto history = agent.get_autoresearch_history();
+auto pareto = agent.get_autoresearch_pareto();
+auto preview = agent.prune_autoresearch(true);
+agent.stop_autoresearch();
+```
+
+See [Replayable Autoresearch](./docs/autoresearch.md) for adaptive sampling,
+constraints, replay, rescoring, comparison, pinning, and retention safety.
+
 ## Examples
 
 The `examples/` directory mirrors the TypeScript SDK example inventory:
@@ -127,6 +151,7 @@ The `examples/` directory mirrors the TypeScript SDK example inventory:
 - `23-system-prompts.cpp`
 - `24-high-level-agent.cpp`
 - `25-structured-json.cpp`
+- `27-autoresearch-ledger.cpp`
 - `basic-agent.cpp`
 - `basic-usage.cpp`
 - `loop-strategies.cpp`
@@ -155,6 +180,7 @@ Live examples require an authenticated Autohand CLI and may ask for tool permiss
 - [SDLC Workflows](./docs/sdlc-workflows.md)
 - [Error Handling](./docs/error-handling.md)
 - [Examples](./docs/examples.md)
+- [Replayable Autoresearch](./docs/autoresearch.md)
 - [Contributing](./CONTRIBUTING.md)
 - [Security](./SECURITY.md)
 

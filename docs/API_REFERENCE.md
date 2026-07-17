@@ -16,6 +16,9 @@ Common fields:
 - `unrestricted`, `auto_mode`, `auto_skill`, `auto_commit`: execution mode flags.
 - `context_compact`: enable or disable context compaction.
 - `yolo`, `yolo_timeout_seconds`: unattended permission policy.
+- `bare`, `idle_logout`, `fork_session`: current long-running runtime controls.
+- `display_language`, prompt-file, MCP, agents, and plugin-directory overrides.
+- `feature_settings_json`: settings applied through RPC immediately after startup.
 
 Helpers:
 
@@ -43,7 +46,40 @@ Important methods:
 - `set_model(model)`
 - `get_state()`
 - `get_messages()`
+- `get_supported_commands()` / `supports_command(command)`
+- `stream_command(command, args, on_event, options)`
+- `apply_flag_settings(settings_json)`
 - `permission_response(request_id, decision)`
+
+### Persistent goals
+
+- `get_goal()`
+- `create_goal(params)`
+- `update_goal(params)`
+- `clear_goal()`
+- `queue_goal(params)`
+- `start_queued_goal()`
+- `list_goal_templates()`
+
+`GoalParams` serializes the CLI's exact snake-case budget keys.
+
+### Replayable autoresearch
+
+- `start_autoresearch(params)`
+- `get_autoresearch_status()`
+- `stop_autoresearch()`
+- `get_autoresearch_history()`
+- `replay_autoresearch(attempt_id, evaluator)`
+- `rescore_autoresearch(attempt_id)` / `rescore_all_autoresearch()`
+- `compare_autoresearch(left_attempt_id, right_attempt_id)`
+- `get_autoresearch_pareto()`
+- `pin_autoresearch(attempt_id, pinned)`
+- `prune_autoresearch(dry_run, yes)`
+
+`AutoresearchStartParams` covers common lifecycle fields. Advanced object
+arrays use explicit JSON fragments (`secondary_objectives_json`,
+`constraints_json`, `sampling_json`, and `retention_json`) because the SDK keeps
+runtime dependencies at zero. See [Replayable Autoresearch](autoresearch.md).
 
 ## `autohand::Agent`
 
@@ -59,11 +95,15 @@ agent.close();
 Methods:
 
 - `send(prompt, options)`
+- `command(command, args, options)`
+- `deep_research(topic, options)`
+- `autoresearch(objective, options)`
 - `run(prompt, options)`
 - `run_json(prompt, schema_json)`
 - `allow_permission(request_id)`
 - `deny_permission(request_id)`
 - `set_plan_mode(enabled)`
+- persistent-goal and replayable-autoresearch methods matching `AutohandSdk`
 - `close()`
 
 ## `autohand::Run`

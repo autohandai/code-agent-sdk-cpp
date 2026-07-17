@@ -41,6 +41,17 @@ Common options:
 - `additional_directories`: extra workspace roots.
 - `skills`: skills available to the agent.
 - `environment`: environment variables for the CLI subprocess.
+- `bare`: minimal explicit runtime.
+- `idle_logout = false`: keep authenticated long-running sessions alive.
+- `fork_session`: fork an existing session before RPC startup.
+- `display_language`: CLI display locale.
+- `system_prompt_file`, `append_system_prompt_file`: prompt files.
+- `mcp_config`, `agents`, `plugin_dir`: explicit integration paths.
+
+Runtime feature settings are applied after startup with
+`sdk.apply_flag_settings(R"({"features":{"slashGoal":true}})")`.
+Set `feature_settings_json` on `Config` to apply the same payload automatically
+as part of SDK startup.
 
 ## System Prompts
 
