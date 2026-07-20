@@ -1301,6 +1301,10 @@ BrowserHandoffAttachResult AutohandSdk::attach_browser_handoff(
   return parse_browser_handoff_attach_result(
       request("autohand.browserHandoff.attach", params.to_json()));
 }
+BrowserHandoffAttachResult AutohandSdk::attach_latest_browser_handoff() {
+  return parse_browser_handoff_attach_result(
+      request("autohand.browserHandoff.attachLatest"));
+}
 GetSkillsRegistryResult AutohandSdk::get_skills_registry(const GetSkillsRegistryParams& params) {
   return parse_skills_registry_result(request("autohand.getSkillsRegistry", params.to_json()));
 }
@@ -1479,6 +1483,9 @@ BrowserHandoffCreateResult Agent::create_browser_handoff(
 BrowserHandoffAttachResult Agent::attach_browser_handoff(
     const BrowserHandoffAttachParams& params) {
   return sdk_.attach_browser_handoff(params);
+}
+BrowserHandoffAttachResult Agent::attach_latest_browser_handoff() {
+  return sdk_.attach_latest_browser_handoff();
 }
 GetSkillsRegistryResult Agent::get_skills_registry(const GetSkillsRegistryParams& params) {
   return sdk_.get_skills_registry(params);

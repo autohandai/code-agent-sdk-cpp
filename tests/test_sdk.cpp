@@ -52,6 +52,9 @@ while IFS= read -r line; do
     *autohand.browserHandoff.create*)
       printf '{"jsonrpc":"2.0","id":%s,"result":{"token":"handoff-token","sessionId":"browser-session","workspaceRoot":"/workspace","createdAt":"2026-07-20T00:00:00.000Z","expiresAt":"2026-07-20T00:10:00.000Z","url":"https://example.test/handoff"}}\n' "$id"
       ;;
+    *autohand.browserHandoff.attachLatest*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"success":true,"sessionId":"latest-session","workspaceRoot":"/workspace","messageCount":5}}\n' "$id"
+      ;;
     *autohand.browserHandoff.attach*)
       printf '{"jsonrpc":"2.0","id":%s,"result":{"success":true,"sessionId":"browser-session","workspaceRoot":"/workspace","messageCount":3}}\n' "$id"
       ;;
@@ -375,6 +378,10 @@ int main(int argc, char** argv) {
   assert(attached.success);
   assert(attached.session_id == "browser-session");
   assert(attached.message_count == 3);
+  const auto latest = sdk.attach_latest_browser_handoff();
+  assert(latest.success);
+  assert(latest.session_id == "latest-session");
+  assert(latest.message_count == 5);
   assert(autohand::json_get_string(sdk.create_goal(goal), "method") == "autohand.goal.create");
   assert(autohand::json_get_string(sdk.get_goal(), "method") == "autohand.goal.get");
   autohand::GoalParams update;

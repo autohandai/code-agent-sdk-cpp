@@ -324,6 +324,7 @@ class AutohandSdk {
       const BrowserHandoffCreateParams& params = {});
   BrowserHandoffAttachResult attach_browser_handoff(
       const BrowserHandoffAttachParams& params);
+  BrowserHandoffAttachResult attach_latest_browser_handoff();
   GetSkillsRegistryResult get_skills_registry(const GetSkillsRegistryParams& params = {});
   InstallSkillResult install_skill(const InstallSkillParams& params);
   McpListServersResult list_mcp_servers();
@@ -408,6 +409,7 @@ class Agent {
       const BrowserHandoffCreateParams& params = {});
   BrowserHandoffAttachResult attach_browser_handoff(
       const BrowserHandoffAttachParams& params);
+  BrowserHandoffAttachResult attach_latest_browser_handoff();
   GetSkillsRegistryResult get_skills_registry(const GetSkillsRegistryParams& params = {});
   InstallSkillResult install_skill(const InstallSkillParams& params);
   McpListServersResult list_mcp_servers();
