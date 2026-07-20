@@ -504,6 +504,17 @@ ResetResult parse_reset_result(const std::string& json) {
   return ResetResult{required_member(root, "sessionId", JsonKind::string).scalar};
 }
 
+BrowserHandoffCreateResult parse_browser_handoff_create_result(const std::string& json) {
+  const auto root = parse_json_document(json);
+  return BrowserHandoffCreateResult{
+      required_member(root, "token", JsonKind::string).scalar,
+      required_member(root, "sessionId", JsonKind::string).scalar,
+      required_member(root, "workspaceRoot", JsonKind::string).scalar,
+      required_member(root, "createdAt", JsonKind::string).scalar,
+      required_member(root, "expiresAt", JsonKind::string).scalar,
+      required_member(root, "url", JsonKind::string).scalar};
+}
+
 GetSkillsRegistryResult parse_skills_registry_result(const std::string& json) {
   const auto root = parse_json_document(json);
   GetSkillsRegistryResult result;
@@ -808,6 +819,16 @@ std::string PromptOptions::to_json(std::string_view message) const {
 std::string GetSkillsRegistryParams::to_json() const {
   if (!force_refresh) return "{}";
   return std::string("{\"forceRefresh\":") + (*force_refresh ? "true}" : "false}");
+}
+
+std::string BrowserHandoffCreateParams::to_json() const {
+  std::ostringstream out;
+  bool first = true;
+  out << '{';
+  if (extension_id) append_json_string(out, first, "extensionId", *extension_id);
+  if (install_url) append_json_string(out, first, "installUrl", *install_url);
+  out << '}';
+  return out.str();
 }
 
 std::string InstallSkillParams::to_json() const {
@@ -1255,6 +1276,11 @@ std::string AutohandSdk::get_messages() { return request("autohand.getMessages")
 ResetResult AutohandSdk::reset() {
   return parse_reset_result(request("autohand.reset"));
 }
+BrowserHandoffCreateResult AutohandSdk::create_browser_handoff(
+    const BrowserHandoffCreateParams& params) {
+  return parse_browser_handoff_create_result(
+      request("autohand.browserHandoff.create", params.to_json()));
+}
 GetSkillsRegistryResult AutohandSdk::get_skills_registry(const GetSkillsRegistryParams& params) {
   return parse_skills_registry_result(request("autohand.getSkillsRegistry", params.to_json()));
 }
@@ -1426,6 +1452,10 @@ std::string Agent::queue_goal(const GoalParams& params) { return sdk_.queue_goal
 std::string Agent::start_queued_goal() { return sdk_.start_queued_goal(); }
 std::string Agent::list_goal_templates() { return sdk_.list_goal_templates(); }
 ResetResult Agent::reset() { return sdk_.reset(); }
+BrowserHandoffCreateResult Agent::create_browser_handoff(
+    const BrowserHandoffCreateParams& params) {
+  return sdk_.create_browser_handoff(params);
+}
 GetSkillsRegistryResult Agent::get_skills_registry(const GetSkillsRegistryParams& params) {
   return sdk_.get_skills_registry(params);
 }

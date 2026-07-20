@@ -49,6 +49,9 @@ while IFS= read -r line; do
     *autohand.reset*)
       printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"reset-session"}}\n' "$id"
       ;;
+    *autohand.browserHandoff.create*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"token":"handoff-token","sessionId":"browser-session","workspaceRoot":"/workspace","createdAt":"2026-07-20T00:00:00.000Z","expiresAt":"2026-07-20T00:10:00.000Z","url":"https://example.test/handoff"}}\n' "$id"
+      ;;
     *autohand.getSkillsRegistry*)
       printf '{"jsonrpc":"2.0","id":%s,"result":{"success":true,"skills":[{"id":"skill-1","name":"review","description":"Review code","category":"quality","tags":["cpp"],"rating":4.5,"downloadCount":8,"isFeatured":true}],"categories":[{"name":"quality","count":1}]}}\n' "$id"
       ;;
@@ -354,6 +357,15 @@ int main(int argc, char** argv) {
   assert(autohand::json_get_string(environment, "apiKey") == "test-key");
   assert(autohand::json_get_string(environment, "baseUrl") == "https://example.test");
   assert(sdk.reset().session_id == "reset-session");
+  autohand::BrowserHandoffCreateParams handoff_create;
+  handoff_create.extension_id = "extension-1";
+  handoff_create.install_url = "https://example.test/install";
+  assert(handoff_create.to_json() ==
+         R"({"extensionId":"extension-1","installUrl":"https://example.test/install"})");
+  const auto handoff = sdk.create_browser_handoff(handoff_create);
+  assert(handoff.token == "handoff-token");
+  assert(handoff.session_id == "browser-session");
+  assert(handoff.url == "https://example.test/handoff");
   assert(autohand::json_get_string(sdk.create_goal(goal), "method") == "autohand.goal.create");
   assert(autohand::json_get_string(sdk.get_goal(), "method") == "autohand.goal.get");
   autohand::GoalParams update;

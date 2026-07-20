@@ -159,6 +159,21 @@ struct ResetResult {
   std::string session_id;
 };
 
+struct BrowserHandoffCreateParams {
+  std::optional<std::string> extension_id;
+  std::optional<std::string> install_url;
+  std::string to_json() const;
+};
+
+struct BrowserHandoffCreateResult {
+  std::string token;
+  std::string session_id;
+  std::string workspace_root;
+  std::string created_at;
+  std::string expires_at;
+  std::string url;
+};
+
 struct CommunitySkill {
   std::string id;
   std::string name;
@@ -293,6 +308,8 @@ class AutohandSdk {
   std::string get_state();
   std::string get_messages();
   ResetResult reset();
+  BrowserHandoffCreateResult create_browser_handoff(
+      const BrowserHandoffCreateParams& params = {});
   GetSkillsRegistryResult get_skills_registry(const GetSkillsRegistryParams& params = {});
   InstallSkillResult install_skill(const InstallSkillParams& params);
   McpListServersResult list_mcp_servers();
@@ -373,6 +390,8 @@ class Agent {
   std::string start_queued_goal();
   std::string list_goal_templates();
   ResetResult reset();
+  BrowserHandoffCreateResult create_browser_handoff(
+      const BrowserHandoffCreateParams& params = {});
   GetSkillsRegistryResult get_skills_registry(const GetSkillsRegistryParams& params = {});
   InstallSkillResult install_skill(const InstallSkillParams& params);
   McpListServersResult list_mcp_servers();

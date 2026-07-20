@@ -143,6 +143,7 @@ request and result structures are typed, including `SkillInstallScope` and
 ## Session And Autonomous Control
 
 - `reset()` clears the conversation and returns the new session ID.
+- `create_browser_handoff()` creates a typed one-time browser handoff.
 
 ## Startup Performance
 
