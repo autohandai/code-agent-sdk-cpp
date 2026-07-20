@@ -186,6 +186,23 @@ struct BrowserHandoffAttachResult {
   std::optional<long long> message_count;
 };
 
+struct AutomodeStartParams {
+  std::string prompt;
+  std::optional<long long> max_iterations;
+  std::optional<std::string> completion_promise;
+  std::optional<bool> use_worktree;
+  std::optional<long long> checkpoint_interval;
+  std::optional<long long> max_runtime;
+  std::optional<double> max_cost;
+  std::string to_json() const;
+};
+
+struct AutomodeStartResult {
+  bool success = false;
+  std::optional<std::string> session_id;
+  std::optional<std::string> error;
+};
+
 struct CommunitySkill {
   std::string id;
   std::string name;
@@ -325,6 +342,7 @@ class AutohandSdk {
   BrowserHandoffAttachResult attach_browser_handoff(
       const BrowserHandoffAttachParams& params);
   BrowserHandoffAttachResult attach_latest_browser_handoff();
+  AutomodeStartResult start_automode(const AutomodeStartParams& params);
   GetSkillsRegistryResult get_skills_registry(const GetSkillsRegistryParams& params = {});
   InstallSkillResult install_skill(const InstallSkillParams& params);
   McpListServersResult list_mcp_servers();
@@ -410,6 +428,7 @@ class Agent {
   BrowserHandoffAttachResult attach_browser_handoff(
       const BrowserHandoffAttachParams& params);
   BrowserHandoffAttachResult attach_latest_browser_handoff();
+  AutomodeStartResult start_automode(const AutomodeStartParams& params);
   GetSkillsRegistryResult get_skills_registry(const GetSkillsRegistryParams& params = {});
   InstallSkillResult install_skill(const InstallSkillParams& params);
   McpListServersResult list_mcp_servers();

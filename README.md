@@ -146,6 +146,7 @@ request and result structures are typed, including `SkillInstallScope` and
 - `create_browser_handoff()` creates a typed one-time browser handoff.
 - `attach_browser_handoff()` consumes a token and attaches its session.
 - `attach_latest_browser_handoff()` attaches the newest unexpired handoff.
+- `start_automode()` starts a typed autonomous run and returns on acceptance.
 
 ## Startup Performance
 

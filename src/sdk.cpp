@@ -525,6 +525,15 @@ BrowserHandoffAttachResult parse_browser_handoff_attach_result(const std::string
   return result;
 }
 
+AutomodeStartResult parse_automode_start_result(const std::string& json) {
+  const auto root = parse_json_document(json);
+  AutomodeStartResult result;
+  result.success = required_member(root, "success", JsonKind::boolean).boolean;
+  result.session_id = optional_string_member(root, "sessionId");
+  result.error = optional_string_member(root, "error");
+  return result;
+}
+
 GetSkillsRegistryResult parse_skills_registry_result(const std::string& json) {
   const auto root = parse_json_document(json);
   GetSkillsRegistryResult result;
@@ -844,6 +853,22 @@ std::string BrowserHandoffCreateParams::to_json() const {
 std::string BrowserHandoffAttachParams::to_json() const {
   if (token.empty()) throw SdkError("browser handoff token must not be empty");
   return "{\"token\":\"" + json_escape(token) + "\"}";
+}
+
+std::string AutomodeStartParams::to_json() const {
+  if (prompt.empty()) throw SdkError("auto-mode prompt must not be empty");
+  std::ostringstream out;
+  bool first = true;
+  out << '{';
+  append_json_string(out, first, "prompt", prompt);
+  if (max_iterations) append_json_number(out, first, "maxIterations", *max_iterations);
+  if (completion_promise) append_json_string(out, first, "completionPromise", *completion_promise);
+  if (use_worktree) append_json_bool(out, first, "useWorktree", *use_worktree);
+  if (checkpoint_interval) append_json_number(out, first, "checkpointInterval", *checkpoint_interval);
+  if (max_runtime) append_json_number(out, first, "maxRuntime", *max_runtime);
+  if (max_cost) append_json_number(out, first, "maxCost", *max_cost);
+  out << '}';
+  return out.str();
 }
 
 std::string InstallSkillParams::to_json() const {
@@ -1305,6 +1330,10 @@ BrowserHandoffAttachResult AutohandSdk::attach_latest_browser_handoff() {
   return parse_browser_handoff_attach_result(
       request("autohand.browserHandoff.attachLatest"));
 }
+AutomodeStartResult AutohandSdk::start_automode(const AutomodeStartParams& params) {
+  return parse_automode_start_result(
+      request("autohand.automode.start", params.to_json()));
+}
 GetSkillsRegistryResult AutohandSdk::get_skills_registry(const GetSkillsRegistryParams& params) {
   return parse_skills_registry_result(request("autohand.getSkillsRegistry", params.to_json()));
 }
@@ -1486,6 +1515,9 @@ BrowserHandoffAttachResult Agent::attach_browser_handoff(
 }
 BrowserHandoffAttachResult Agent::attach_latest_browser_handoff() {
   return sdk_.attach_latest_browser_handoff();
+}
+AutomodeStartResult Agent::start_automode(const AutomodeStartParams& params) {
+  return sdk_.start_automode(params);
 }
 GetSkillsRegistryResult Agent::get_skills_registry(const GetSkillsRegistryParams& params) {
   return sdk_.get_skills_registry(params);
