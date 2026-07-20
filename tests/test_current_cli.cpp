@@ -167,6 +167,30 @@ void test_multi_file_change_decisions(const std::string& executable) {
   assert(rejected);
 }
 
+void test_session_history(const std::string& executable) {
+  Fixture fixture(
+      executable,
+      "session-history",
+      R"({"sessions":[{"sessionId":"session-1","createdAt":"2026-07-20T00:00:00Z","lastActiveAt":"2026-07-21T00:00:00Z","projectName":"tin","model":"gpt-5","messageCount":7,"status":"completed"}],"currentPage":2,"totalPages":3,"totalItems":21})");
+  const auto result = fixture.sdk.get_session_history({2, 10});
+  assert(result.sessions.size() == 1);
+  assert(result.sessions.front().session_id == "session-1");
+  assert(result.sessions.front().status == autohand::SessionStatus::Completed);
+  assert(result.current_page == 2);
+  assert(result.total_pages == 3);
+  assert(result.total_items == 21);
+  fixture.assert_request(
+      "autohand.getHistory", {R"("page":2)", R"("pageSize":10)"});
+
+  bool rejected = false;
+  try {
+    (void)fixture.sdk.get_session_history({0, std::nullopt});
+  } catch (const autohand::SdkError&) {
+    rejected = true;
+  }
+  assert(rejected);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -177,5 +201,6 @@ int main(int argc, char** argv) {
   test_directory_access_response(executable);
   test_directory_access_acknowledgement(executable);
   test_multi_file_change_decisions(executable);
+  test_session_history(executable);
   return 0;
 }

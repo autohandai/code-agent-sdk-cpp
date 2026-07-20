@@ -765,6 +765,35 @@ ChangesDecisionResult parse_changes_decision_result(const std::string& json) {
   return result;
 }
 
+SessionStatus parse_session_status(const std::string& value) {
+  if (value == "active") return SessionStatus::Active;
+  if (value == "completed") return SessionStatus::Completed;
+  if (value == "crashed") return SessionStatus::Crashed;
+  throw SdkError("invalid RPC result: unknown session status '" + value + "'");
+}
+
+SessionHistoryResult parse_session_history_result(const std::string& json) {
+  const auto root = parse_json_document(json);
+  SessionHistoryResult result;
+  for (const auto& value : required_member(root, "sessions", JsonKind::array).array) {
+    if (value.kind != JsonKind::object) {
+      throw SdkError("invalid RPC result: expected session history object");
+    }
+    result.sessions.push_back(SessionHistoryEntry{
+        required_member(value, "sessionId", JsonKind::string).scalar,
+        required_member(value, "createdAt", JsonKind::string).scalar,
+        required_member(value, "lastActiveAt", JsonKind::string).scalar,
+        required_member(value, "projectName", JsonKind::string).scalar,
+        required_member(value, "model", JsonKind::string).scalar,
+        required_integer_member(value, "messageCount"),
+        parse_session_status(required_member(value, "status", JsonKind::string).scalar)});
+  }
+  result.current_page = required_integer_member(root, "currentPage");
+  result.total_pages = required_integer_member(root, "totalPages");
+  result.total_items = required_integer_member(root, "totalItems");
+  return result;
+}
+
 std::vector<std::string> split_exec_args(const std::string& executable, const std::vector<std::string>& args) {
   std::vector<std::string> all;
   all.push_back(executable);
@@ -1662,6 +1691,24 @@ ChangesDecisionResult AutohandSdk::decide_changes(
     const ChangesDecisionParams& params) {
   return parse_changes_decision_result(
       request("autohand.changesDecision", params.to_json()));
+}
+
+std::string SessionHistoryParams::to_json() const {
+  if ((page && *page < 1) || (page_size && *page_size < 1)) {
+    throw SdkError("session history page values must be positive");
+  }
+  std::ostringstream output;
+  output << '{';
+  bool first = true;
+  if (page) append_json_number(output, first, "page", *page);
+  if (page_size) append_json_number(output, first, "pageSize", *page_size);
+  output << '}';
+  return output.str();
+}
+
+SessionHistoryResult AutohandSdk::get_session_history(
+    const SessionHistoryParams& params) {
+  return parse_session_history_result(request("autohand.getHistory", params.to_json()));
 }
 
 Run::Run(AutohandSdk& sdk, std::string prompt, PromptOptions options)

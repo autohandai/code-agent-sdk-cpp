@@ -395,6 +395,31 @@ struct ChangesDecisionResult {
   std::vector<ChangeDecisionError> errors;
 };
 
+enum class SessionStatus { Active, Completed, Crashed };
+
+struct SessionHistoryParams {
+  std::optional<long long> page;
+  std::optional<long long> page_size;
+  std::string to_json() const;
+};
+
+struct SessionHistoryEntry {
+  std::string session_id;
+  std::string created_at;
+  std::string last_active_at;
+  std::string project_name;
+  std::string model;
+  long long message_count = 0;
+  SessionStatus status = SessionStatus::Active;
+};
+
+struct SessionHistoryResult {
+  std::vector<SessionHistoryEntry> sessions;
+  long long current_page = 0;
+  long long total_pages = 0;
+  long long total_items = 0;
+};
+
 struct SdkEvent {
   std::string type;
   std::string raw_json;
@@ -491,6 +516,7 @@ class AutohandSdk {
   DirectoryAccessAcknowledgedResult acknowledge_directory_access(
       const std::string& request_id);
   ChangesDecisionResult decide_changes(const ChangesDecisionParams& params);
+  SessionHistoryResult get_session_history(const SessionHistoryParams& params = {});
 
  private:
   class Impl;
