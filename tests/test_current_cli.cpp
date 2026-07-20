@@ -124,6 +124,21 @@ void test_directory_access_response(const std::string& executable) {
   assert(rejected);
 }
 
+void test_directory_access_acknowledgement(const std::string& executable) {
+  Fixture fixture(executable, "directory-ack", R"({"success":true})");
+  const auto result = fixture.sdk.acknowledge_directory_access("directory-2");
+  assert(result.success);
+  fixture.assert_request(
+      "autohand.directoryAccessAcknowledged", {R"("requestId":"directory-2")"});
+  bool rejected = false;
+  try {
+    (void)fixture.sdk.acknowledge_directory_access("\t");
+  } catch (const autohand::SdkError&) {
+    rejected = true;
+  }
+  assert(rejected);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -132,5 +147,6 @@ int main(int argc, char** argv) {
   const auto executable = std::filesystem::absolute(argv[0]).string();
   test_permission_acknowledgement(executable);
   test_directory_access_response(executable);
+  test_directory_access_acknowledgement(executable);
   return 0;
 }

@@ -736,6 +736,13 @@ DirectoryAccessResponseResult parse_directory_access_response_result(
       required_member(root, "success", JsonKind::boolean).boolean};
 }
 
+DirectoryAccessAcknowledgedResult parse_directory_access_acknowledged_result(
+    const std::string& json) {
+  const auto root = parse_json_document(json);
+  return DirectoryAccessAcknowledgedResult{
+      required_member(root, "success", JsonKind::boolean).boolean};
+}
+
 std::vector<std::string> split_exec_args(const std::string& executable, const std::vector<std::string>& args) {
   std::vector<std::string> all;
   all.push_back(executable);
@@ -1589,6 +1596,16 @@ DirectoryAccessResponseResult AutohandSdk::respond_to_directory_access(
     const DirectoryAccessResponseParams& params) {
   return parse_directory_access_response_result(
       request("autohand.directoryAccessResponse", params.to_json()));
+}
+
+DirectoryAccessAcknowledgedResult AutohandSdk::acknowledge_directory_access(
+    const std::string& request_id) {
+  if (request_id.empty() || is_blank(request_id)) {
+    throw SdkError("directory access request_id must not be blank");
+  }
+  return parse_directory_access_acknowledged_result(request(
+      "autohand.directoryAccessAcknowledged",
+      "{\"requestId\":\"" + json_escape(request_id) + "\"}"));
 }
 
 Run::Run(AutohandSdk& sdk, std::string prompt, PromptOptions options)
