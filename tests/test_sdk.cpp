@@ -52,6 +52,9 @@ while IFS= read -r line; do
     *autohand.browserHandoff.create*)
       printf '{"jsonrpc":"2.0","id":%s,"result":{"token":"handoff-token","sessionId":"browser-session","workspaceRoot":"/workspace","createdAt":"2026-07-20T00:00:00.000Z","expiresAt":"2026-07-20T00:10:00.000Z","url":"https://example.test/handoff"}}\n' "$id"
       ;;
+    *autohand.browserHandoff.attach*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"success":true,"sessionId":"browser-session","workspaceRoot":"/workspace","messageCount":3}}\n' "$id"
+      ;;
     *autohand.getSkillsRegistry*)
       printf '{"jsonrpc":"2.0","id":%s,"result":{"success":true,"skills":[{"id":"skill-1","name":"review","description":"Review code","category":"quality","tags":["cpp"],"rating":4.5,"downloadCount":8,"isFeatured":true}],"categories":[{"name":"quality","count":1}]}}\n' "$id"
       ;;
@@ -366,6 +369,12 @@ int main(int argc, char** argv) {
   assert(handoff.token == "handoff-token");
   assert(handoff.session_id == "browser-session");
   assert(handoff.url == "https://example.test/handoff");
+  autohand::BrowserHandoffAttachParams handoff_attach{"handoff-token"};
+  assert(handoff_attach.to_json() == R"({"token":"handoff-token"})");
+  const auto attached = sdk.attach_browser_handoff(handoff_attach);
+  assert(attached.success);
+  assert(attached.session_id == "browser-session");
+  assert(attached.message_count == 3);
   assert(autohand::json_get_string(sdk.create_goal(goal), "method") == "autohand.goal.create");
   assert(autohand::json_get_string(sdk.get_goal(), "method") == "autohand.goal.get");
   autohand::GoalParams update;

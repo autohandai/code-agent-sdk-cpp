@@ -144,6 +144,7 @@ request and result structures are typed, including `SkillInstallScope` and
 
 - `reset()` clears the conversation and returns the new session ID.
 - `create_browser_handoff()` creates a typed one-time browser handoff.
+- `attach_browser_handoff()` consumes a token and attaches its session.
 
 ## Startup Performance
 

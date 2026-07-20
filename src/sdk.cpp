@@ -515,6 +515,16 @@ BrowserHandoffCreateResult parse_browser_handoff_create_result(const std::string
       required_member(root, "url", JsonKind::string).scalar};
 }
 
+BrowserHandoffAttachResult parse_browser_handoff_attach_result(const std::string& json) {
+  const auto root = parse_json_document(json);
+  BrowserHandoffAttachResult result;
+  result.success = required_member(root, "success", JsonKind::boolean).boolean;
+  result.session_id = optional_string_member(root, "sessionId");
+  result.workspace_root = optional_string_member(root, "workspaceRoot");
+  result.message_count = optional_integer_member(root, "messageCount");
+  return result;
+}
+
 GetSkillsRegistryResult parse_skills_registry_result(const std::string& json) {
   const auto root = parse_json_document(json);
   GetSkillsRegistryResult result;
@@ -829,6 +839,11 @@ std::string BrowserHandoffCreateParams::to_json() const {
   if (install_url) append_json_string(out, first, "installUrl", *install_url);
   out << '}';
   return out.str();
+}
+
+std::string BrowserHandoffAttachParams::to_json() const {
+  if (token.empty()) throw SdkError("browser handoff token must not be empty");
+  return "{\"token\":\"" + json_escape(token) + "\"}";
 }
 
 std::string InstallSkillParams::to_json() const {
@@ -1281,6 +1296,11 @@ BrowserHandoffCreateResult AutohandSdk::create_browser_handoff(
   return parse_browser_handoff_create_result(
       request("autohand.browserHandoff.create", params.to_json()));
 }
+BrowserHandoffAttachResult AutohandSdk::attach_browser_handoff(
+    const BrowserHandoffAttachParams& params) {
+  return parse_browser_handoff_attach_result(
+      request("autohand.browserHandoff.attach", params.to_json()));
+}
 GetSkillsRegistryResult AutohandSdk::get_skills_registry(const GetSkillsRegistryParams& params) {
   return parse_skills_registry_result(request("autohand.getSkillsRegistry", params.to_json()));
 }
@@ -1455,6 +1475,10 @@ ResetResult Agent::reset() { return sdk_.reset(); }
 BrowserHandoffCreateResult Agent::create_browser_handoff(
     const BrowserHandoffCreateParams& params) {
   return sdk_.create_browser_handoff(params);
+}
+BrowserHandoffAttachResult Agent::attach_browser_handoff(
+    const BrowserHandoffAttachParams& params) {
+  return sdk_.attach_browser_handoff(params);
 }
 GetSkillsRegistryResult Agent::get_skills_registry(const GetSkillsRegistryParams& params) {
   return sdk_.get_skills_registry(params);
