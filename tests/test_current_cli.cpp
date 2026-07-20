@@ -444,6 +444,22 @@ void test_automode_completion_events(const std::string& executable) {
   assert(complete->files_modified == 5);
 }
 
+void test_automode_error_events(const std::string& executable) {
+  Fixture fixture(
+      executable,
+      "automode-error",
+      "{}",
+      R"({"jsonrpc":"2.0","method":"autohand.automode.error","params":{"sessionId":"session-auto","error":"iteration limit reached","timestamp":"2026-07-21T00:02:00Z"}})");
+  std::vector<autohand::SdkEvent> events;
+  fixture.sdk.stream_prompt("continue", [&](const auto& event) { events.push_back(event); });
+  assert(events.size() == 1);
+  assert(events.front().type == "automode_error");
+  const auto* error = std::get_if<autohand::AutomodeErrorEvent>(&events.front().payload);
+  assert(error != nullptr);
+  assert(error->session_id == "session-auto");
+  assert(error->error == "iteration limit reached");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -467,5 +483,6 @@ int main(int argc, char** argv) {
   test_context_compaction_control(executable);
   test_automode_iteration_events(executable);
   test_automode_completion_events(executable);
+  test_automode_error_events(executable);
   return 0;
 }

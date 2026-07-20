@@ -1040,6 +1040,14 @@ AutomodeCompleteEvent parse_automode_complete_event(const std::string& json) {
       required_member(root, "timestamp", JsonKind::string).scalar};
 }
 
+AutomodeErrorEvent parse_automode_error_event(const std::string& json) {
+  const auto root = parse_json_document(json);
+  return AutomodeErrorEvent{
+      required_member(root, "sessionId", JsonKind::string).scalar,
+      required_member(root, "error", JsonKind::string).scalar,
+      required_member(root, "timestamp", JsonKind::string).scalar};
+}
+
 std::vector<std::string> split_exec_args(const std::string& executable, const std::vector<std::string>& args) {
   std::vector<std::string> all;
   all.push_back(executable);
@@ -2377,6 +2385,7 @@ std::string event_type_from_method(const std::string& method, const std::string&
   if (method == "autohand.permissionRequest") return "permission_request";
   if (method == "autohand.automode.iteration") return "automode_iteration";
   if (method == "autohand.automode.complete") return "automode_complete";
+  if (method == "autohand.automode.error") return "automode_error";
   if (method.rfind("autohand.autoresearch.", 0) == 0) return "autoresearch";
   if (method == "autohand.error") return "error";
   constexpr std::string_view prefix = "autohand.";
@@ -2404,6 +2413,11 @@ SdkEvent sdk_event_from_notification(const std::string& method, const std::strin
     return SdkEvent{
         "automode_complete", normalized_params,
         parse_automode_complete_event(normalized_params)};
+  }
+  if (method == "autohand.automode.error") {
+    return SdkEvent{
+        "automode_error", normalized_params,
+        parse_automode_error_event(normalized_params)};
   }
   return SdkEvent{
       event_type_from_method(method, normalized_params), normalized_params, std::monostate{}};

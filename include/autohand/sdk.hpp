@@ -627,8 +627,18 @@ struct AutomodeCompleteEvent {
   std::string timestamp;
 };
 
+struct AutomodeErrorEvent {
+  std::string session_id;
+  std::string error;
+  std::string timestamp;
+};
+
 using SdkEventPayload =
-    std::variant<std::monostate, AutomodeIterationEvent, AutomodeCompleteEvent>;
+    std::variant<
+        std::monostate,
+        AutomodeIterationEvent,
+        AutomodeCompleteEvent,
+        AutomodeErrorEvent>;
 
 struct SdkEvent {
   std::string type;
