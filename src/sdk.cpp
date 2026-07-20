@@ -1101,6 +1101,15 @@ PostResponseHookEvent parse_post_response_hook_event(const std::string& json) {
   return event;
 }
 
+McpInvocationRequestEvent parse_mcp_invocation_request_event(const std::string& json) {
+  const auto root = parse_json_document(json);
+  return McpInvocationRequestEvent{
+      required_member(root, "requestId", JsonKind::string).scalar,
+      required_member(root, "toolName", JsonKind::string).scalar,
+      serialize_json(required_member(root, "args", JsonKind::object)),
+      required_member(root, "timestamp", JsonKind::string).scalar};
+}
+
 std::vector<std::string> split_exec_args(const std::string& executable, const std::vector<std::string>& args) {
   std::vector<std::string> all;
   all.push_back(executable);
@@ -2443,6 +2452,7 @@ std::string event_type_from_method(const std::string& method, const std::string&
   if (method == "autohand.hook.postTool") return "hook_post_tool";
   if (method == "autohand.hook.prePrompt") return "hook_pre_prompt";
   if (method == "autohand.hook.postResponse") return "hook_post_response";
+  if (method == "autohand.mcp.invokeRequest") return "mcp_invoke_request";
   if (method.rfind("autohand.autoresearch.", 0) == 0) return "autoresearch";
   if (method == "autohand.error") return "error";
   constexpr std::string_view prefix = "autohand.";
@@ -2495,6 +2505,11 @@ SdkEvent sdk_event_from_notification(const std::string& method, const std::strin
     return SdkEvent{
         "hook_post_response", normalized_params,
         parse_post_response_hook_event(normalized_params)};
+  }
+  if (method == "autohand.mcp.invokeRequest") {
+    return SdkEvent{
+        "mcp_invoke_request", normalized_params,
+        parse_mcp_invocation_request_event(normalized_params)};
   }
   return SdkEvent{
       event_type_from_method(method, normalized_params), normalized_params, std::monostate{}};

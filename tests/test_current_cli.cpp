@@ -531,6 +531,24 @@ void test_post_response_hook_events(const std::string& executable) {
   assert(hook->duration == 225.5);
 }
 
+void test_mcp_invocation_request_events(const std::string& executable) {
+  Fixture fixture(
+      executable,
+      "mcp-invoke-request",
+      "{}",
+      R"({"jsonrpc":"2.0","method":"autohand.mcp.invokeRequest","params":{"requestId":"invoke-4","toolName":"workspace.read","args":{"path":"README.md"},"timestamp":"2026-07-21T00:07:00Z"}})");
+  std::vector<autohand::SdkEvent> events;
+  fixture.sdk.stream_prompt("continue", [&](const auto& event) { events.push_back(event); });
+  assert(events.size() == 1);
+  assert(events.front().type == "mcp_invoke_request");
+  const auto* request =
+      std::get_if<autohand::McpInvocationRequestEvent>(&events.front().payload);
+  assert(request != nullptr);
+  assert(request->request_id == "invoke-4");
+  assert(request->tool_name == "workspace.read");
+  assert(request->args_json == R"({"path":"README.md"})");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -559,5 +577,6 @@ int main(int argc, char** argv) {
   test_post_tool_hook_events(executable);
   test_pre_prompt_hook_events(executable);
   test_post_response_hook_events(executable);
+  test_mcp_invocation_request_events(executable);
   return 0;
 }

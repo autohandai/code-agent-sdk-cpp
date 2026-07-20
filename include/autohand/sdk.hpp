@@ -665,6 +665,13 @@ struct PostResponseHookEvent {
   std::string timestamp;
 };
 
+struct McpInvocationRequestEvent {
+  std::string request_id;
+  std::string tool_name;
+  std::string args_json;
+  std::string timestamp;
+};
+
 using SdkEventPayload =
     std::variant<
         std::monostate,
@@ -674,7 +681,8 @@ using SdkEventPayload =
         PreToolHookEvent,
         PostToolHookEvent,
         PrePromptHookEvent,
-        PostResponseHookEvent>;
+        PostResponseHookEvent,
+        McpInvocationRequestEvent>;
 
 struct SdkEvent {
   std::string type;
