@@ -729,6 +729,13 @@ PermissionAcknowledgedResult parse_permission_acknowledged_result(const std::str
       required_member(root, "success", JsonKind::boolean).boolean};
 }
 
+DirectoryAccessResponseResult parse_directory_access_response_result(
+    const std::string& json) {
+  const auto root = parse_json_document(json);
+  return DirectoryAccessResponseResult{
+      required_member(root, "success", JsonKind::boolean).boolean};
+}
+
 std::vector<std::string> split_exec_args(const std::string& executable, const std::vector<std::string>& args) {
   std::vector<std::string> all;
   all.push_back(executable);
@@ -1568,6 +1575,20 @@ PermissionAcknowledgedResult AutohandSdk::acknowledge_permission(
   return parse_permission_acknowledged_result(request(
       "autohand.permissionAcknowledged",
       "{\"requestId\":\"" + json_escape(request_id) + "\"}"));
+}
+
+std::string DirectoryAccessResponseParams::to_json() const {
+  if (request_id.empty() || is_blank(request_id)) {
+    throw SdkError("directory access request_id must not be blank");
+  }
+  return "{\"requestId\":\"" + json_escape(request_id) + "\",\"granted\":" +
+         (granted ? "true}" : "false}");
+}
+
+DirectoryAccessResponseResult AutohandSdk::respond_to_directory_access(
+    const DirectoryAccessResponseParams& params) {
+  return parse_directory_access_response_result(
+      request("autohand.directoryAccessResponse", params.to_json()));
 }
 
 Run::Run(AutohandSdk& sdk, std::string prompt, PromptOptions options)

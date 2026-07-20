@@ -354,6 +354,16 @@ struct PermissionAcknowledgedResult {
   bool success = false;
 };
 
+struct DirectoryAccessResponseParams {
+  std::string request_id;
+  bool granted = false;
+  std::string to_json() const;
+};
+
+struct DirectoryAccessResponseResult {
+  bool success = false;
+};
+
 struct SdkEvent {
   std::string type;
   std::string raw_json;
@@ -445,6 +455,8 @@ class AutohandSdk {
   std::string prune_autoresearch(bool dry_run = true, bool yes = false);
   std::string permission_response(const std::string& request_id, const std::string& decision);
   PermissionAcknowledgedResult acknowledge_permission(const std::string& request_id);
+  DirectoryAccessResponseResult respond_to_directory_access(
+      const DirectoryAccessResponseParams& params);
 
  private:
   class Impl;

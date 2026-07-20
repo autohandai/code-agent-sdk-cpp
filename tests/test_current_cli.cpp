@@ -107,6 +107,23 @@ void test_permission_acknowledgement(const std::string& executable) {
   assert(rejected);
 }
 
+void test_directory_access_response(const std::string& executable) {
+  Fixture fixture(executable, "directory-response", R"({"success":true})");
+  const auto result = fixture.sdk.respond_to_directory_access(
+      autohand::DirectoryAccessResponseParams{"directory-1", true});
+  assert(result.success);
+  fixture.assert_request(
+      "autohand.directoryAccessResponse",
+      {R"("requestId":"directory-1")", R"("granted":true)"});
+  bool rejected = false;
+  try {
+    (void)fixture.sdk.respond_to_directory_access({"", false});
+  } catch (const autohand::SdkError&) {
+    rejected = true;
+  }
+  assert(rejected);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -114,5 +131,6 @@ int main(int argc, char** argv) {
   if (std::getenv("AUTOHAND_CPP_CURRENT_FIXTURE")) return run_fixture();
   const auto executable = std::filesystem::absolute(argv[0]).string();
   test_permission_acknowledgement(executable);
+  test_directory_access_response(executable);
   return 0;
 }
