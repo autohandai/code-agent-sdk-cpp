@@ -672,6 +672,11 @@ struct McpInvocationRequestEvent {
   std::string timestamp;
 };
 
+struct McpToolsChangedEvent {
+  std::vector<McpToolInfo> tools;
+  std::string timestamp;
+};
+
 using SdkEventPayload =
     std::variant<
         std::monostate,
@@ -682,7 +687,8 @@ using SdkEventPayload =
         PostToolHookEvent,
         PrePromptHookEvent,
         PostResponseHookEvent,
-        McpInvocationRequestEvent>;
+        McpInvocationRequestEvent,
+        McpToolsChangedEvent>;
 
 struct SdkEvent {
   std::string type;

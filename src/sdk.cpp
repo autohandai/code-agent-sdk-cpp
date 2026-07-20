@@ -1110,6 +1110,22 @@ McpInvocationRequestEvent parse_mcp_invocation_request_event(const std::string& 
       required_member(root, "timestamp", JsonKind::string).scalar};
 }
 
+McpToolsChangedEvent parse_mcp_tools_changed_event(const std::string& json) {
+  const auto root = parse_json_document(json);
+  McpToolsChangedEvent event;
+  for (const auto& value : required_member(root, "tools", JsonKind::array).array) {
+    if (value.kind != JsonKind::object) {
+      throw SdkError("invalid RPC notification: expected MCP tool object");
+    }
+    event.tools.push_back(McpToolInfo{
+        required_member(value, "name", JsonKind::string).scalar,
+        required_member(value, "description", JsonKind::string).scalar,
+        required_member(value, "serverName", JsonKind::string).scalar});
+  }
+  event.timestamp = required_member(root, "timestamp", JsonKind::string).scalar;
+  return event;
+}
+
 std::vector<std::string> split_exec_args(const std::string& executable, const std::vector<std::string>& args) {
   std::vector<std::string> all;
   all.push_back(executable);
@@ -2453,6 +2469,7 @@ std::string event_type_from_method(const std::string& method, const std::string&
   if (method == "autohand.hook.prePrompt") return "hook_pre_prompt";
   if (method == "autohand.hook.postResponse") return "hook_post_response";
   if (method == "autohand.mcp.invokeRequest") return "mcp_invoke_request";
+  if (method == "autohand.mcp.toolsChanged") return "mcp_tools_changed";
   if (method.rfind("autohand.autoresearch.", 0) == 0) return "autoresearch";
   if (method == "autohand.error") return "error";
   constexpr std::string_view prefix = "autohand.";
@@ -2510,6 +2527,11 @@ SdkEvent sdk_event_from_notification(const std::string& method, const std::strin
     return SdkEvent{
         "mcp_invoke_request", normalized_params,
         parse_mcp_invocation_request_event(normalized_params)};
+  }
+  if (method == "autohand.mcp.toolsChanged") {
+    return SdkEvent{
+        "mcp_tools_changed", normalized_params,
+        parse_mcp_tools_changed_event(normalized_params)};
   }
   return SdkEvent{
       event_type_from_method(method, normalized_params), normalized_params, std::monostate{}};

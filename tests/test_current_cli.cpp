@@ -549,6 +549,24 @@ void test_mcp_invocation_request_events(const std::string& executable) {
   assert(request->args_json == R"({"path":"README.md"})");
 }
 
+void test_mcp_tools_changed_events(const std::string& executable) {
+  Fixture fixture(
+      executable,
+      "mcp-tools-changed",
+      "{}",
+      R"({"jsonrpc":"2.0","method":"autohand.mcp.toolsChanged","params":{"tools":[{"name":"workspace.read","description":"Read a file","serverName":"vscode"}],"timestamp":"2026-07-21T00:08:00Z"}})");
+  std::vector<autohand::SdkEvent> events;
+  fixture.sdk.stream_prompt("continue", [&](const auto& event) { events.push_back(event); });
+  assert(events.size() == 1);
+  assert(events.front().type == "mcp_tools_changed");
+  const auto* changed =
+      std::get_if<autohand::McpToolsChangedEvent>(&events.front().payload);
+  assert(changed != nullptr);
+  assert(changed->tools.size() == 1);
+  assert(changed->tools.front().name == "workspace.read");
+  assert(changed->tools.front().server_name == "vscode");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -578,5 +596,6 @@ int main(int argc, char** argv) {
   test_pre_prompt_hook_events(executable);
   test_post_response_hook_events(executable);
   test_mcp_invocation_request_events(executable);
+  test_mcp_tools_changed_events(executable);
   return 0;
 }
