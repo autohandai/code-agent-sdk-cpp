@@ -633,12 +633,20 @@ struct AutomodeErrorEvent {
   std::string timestamp;
 };
 
+struct PreToolHookEvent {
+  std::string tool_id;
+  std::string tool_name;
+  std::string args_json;
+  std::string timestamp;
+};
+
 using SdkEventPayload =
     std::variant<
         std::monostate,
         AutomodeIterationEvent,
         AutomodeCompleteEvent,
-        AutomodeErrorEvent>;
+        AutomodeErrorEvent,
+        PreToolHookEvent>;
 
 struct SdkEvent {
   std::string type;

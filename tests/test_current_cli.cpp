@@ -460,6 +460,23 @@ void test_automode_error_events(const std::string& executable) {
   assert(error->error == "iteration limit reached");
 }
 
+void test_pre_tool_hook_events(const std::string& executable) {
+  Fixture fixture(
+      executable,
+      "hook-pre-tool",
+      "{}",
+      R"({"jsonrpc":"2.0","method":"autohand.hook.preTool","params":{"toolId":"tool-1","toolName":"read_file","args":{"path":"README.md"},"timestamp":"2026-07-21T00:03:00Z"}})");
+  std::vector<autohand::SdkEvent> events;
+  fixture.sdk.stream_prompt("continue", [&](const auto& event) { events.push_back(event); });
+  assert(events.size() == 1);
+  assert(events.front().type == "hook_pre_tool");
+  const auto* hook = std::get_if<autohand::PreToolHookEvent>(&events.front().payload);
+  assert(hook != nullptr);
+  assert(hook->tool_id == "tool-1");
+  assert(hook->tool_name == "read_file");
+  assert(hook->args_json == R"({"path":"README.md"})");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -484,5 +501,6 @@ int main(int argc, char** argv) {
   test_automode_iteration_events(executable);
   test_automode_completion_events(executable);
   test_automode_error_events(executable);
+  test_pre_tool_hook_events(executable);
   return 0;
 }
