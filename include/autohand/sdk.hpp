@@ -607,6 +607,10 @@ struct ToolsRegistryResult {
   std::vector<ToolRegistryDiagnostic> diagnostics;
 };
 
+struct ContextCompactResult {
+  bool enabled = false;
+};
+
 struct SdkEvent {
   std::string type;
   std::string raw_json;
@@ -717,6 +721,7 @@ class AutohandSdk {
   LearnUpdateResult update_project_skills();
   LearnGenerateResult generate_skill(const LearnGenerateParams& params);
   ToolsRegistryResult get_tools_registry();
+  ContextCompactResult set_context_compact(bool enabled);
 
  private:
   class Impl;

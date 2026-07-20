@@ -373,6 +373,13 @@ void test_tools_registry(const std::string& executable) {
   fixture.assert_request("autohand.getToolsRegistry", {});
 }
 
+void test_context_compaction_control(const std::string& executable) {
+  Fixture fixture(executable, "context-compact", R"({"enabled":true})");
+  const auto result = fixture.sdk.set_context_compact(true);
+  assert(result.enabled);
+  fixture.assert_request("autohand.setContextCompact", {R"("enabled":true)"});
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -393,5 +400,6 @@ int main(int argc, char** argv) {
   test_project_learning_updates(executable);
   test_skill_generation(executable);
   test_tools_registry(executable);
+  test_context_compaction_control(executable);
   return 0;
 }

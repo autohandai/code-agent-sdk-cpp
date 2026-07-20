@@ -1008,6 +1008,12 @@ ToolsRegistryResult parse_tools_registry_result(const std::string& json) {
   return result;
 }
 
+ContextCompactResult parse_context_compact_result(const std::string& json) {
+  const auto root = parse_json_document(json);
+  return ContextCompactResult{
+      required_member(root, "enabled", JsonKind::boolean).boolean};
+}
+
 std::vector<std::string> split_exec_args(const std::string& executable, const std::vector<std::string>& args) {
   std::vector<std::string> all;
   all.push_back(executable);
@@ -2065,6 +2071,12 @@ LearnGenerateResult AutohandSdk::generate_skill(const LearnGenerateParams& param
 
 ToolsRegistryResult AutohandSdk::get_tools_registry() {
   return parse_tools_registry_result(request("autohand.getToolsRegistry"));
+}
+
+ContextCompactResult AutohandSdk::set_context_compact(bool enabled) {
+  return parse_context_compact_result(request(
+      "autohand.setContextCompact",
+      std::string("{\"enabled\":") + (enabled ? "true}" : "false}")));
 }
 
 Run::Run(AutohandSdk& sdk, std::string prompt, PromptOptions options)
