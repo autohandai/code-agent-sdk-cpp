@@ -425,6 +425,25 @@ void test_automode_iteration_events(const std::string& executable) {
   assert(std::holds_alternative<std::monostate>(malformed_events.front().payload));
 }
 
+void test_automode_completion_events(const std::string& executable) {
+  Fixture fixture(
+      executable,
+      "automode-complete",
+      "{}",
+      R"({"jsonrpc":"2.0","method":"autohand.automode.complete","params":{"sessionId":"session-auto","iterations":8,"filesCreated":2,"filesModified":5,"timestamp":"2026-07-21T00:01:00Z"}})");
+  std::vector<autohand::SdkEvent> events;
+  fixture.sdk.stream_prompt("continue", [&](const auto& event) { events.push_back(event); });
+  assert(events.size() == 1);
+  assert(events.front().type == "automode_complete");
+  const auto* complete =
+      std::get_if<autohand::AutomodeCompleteEvent>(&events.front().payload);
+  assert(complete != nullptr);
+  assert(complete->session_id == "session-auto");
+  assert(complete->iterations == 8);
+  assert(complete->files_created == 2);
+  assert(complete->files_modified == 5);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -447,5 +466,6 @@ int main(int argc, char** argv) {
   test_tools_registry(executable);
   test_context_compaction_control(executable);
   test_automode_iteration_events(executable);
+  test_automode_completion_events(executable);
   return 0;
 }

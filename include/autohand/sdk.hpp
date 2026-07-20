@@ -619,7 +619,16 @@ struct AutomodeIterationEvent {
   std::string timestamp;
 };
 
-using SdkEventPayload = std::variant<std::monostate, AutomodeIterationEvent>;
+struct AutomodeCompleteEvent {
+  std::string session_id;
+  long long iterations = 0;
+  long long files_created = 0;
+  long long files_modified = 0;
+  std::string timestamp;
+};
+
+using SdkEventPayload =
+    std::variant<std::monostate, AutomodeIterationEvent, AutomodeCompleteEvent>;
 
 struct SdkEvent {
   std::string type;
