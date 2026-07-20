@@ -285,6 +285,34 @@ void test_vscode_mcp_tool_registration(const std::string& executable) {
   assert(rejected);
 }
 
+void test_mcp_invocation_responses(const std::string& executable) {
+  Fixture fixture(executable, "mcp-response", R"({"success":true})");
+  const auto result = fixture.sdk.respond_to_mcp_invocation(
+      {"invoke-1", autohand::McpInvocationSuccess{R"({"content":"ok"})"}});
+  assert(result.success);
+  fixture.assert_request(
+      "autohand.mcp.invokeResponse",
+      {R"("requestId":"invoke-1")", R"("success":true)",
+       R"("result":{"content":"ok"})"});
+
+  const auto failure = fixture.sdk.respond_to_mcp_invocation(
+      {"invoke-2", autohand::McpInvocationFailure{"tool failed"}});
+  assert(failure.success);
+  fixture.assert_request(
+      "autohand.mcp.invokeResponse",
+      {R"("requestId":"invoke-2")", R"("success":false)",
+       R"("error":"tool failed")"});
+
+  bool rejected = false;
+  try {
+    (void)fixture.sdk.respond_to_mcp_invocation(
+        {"invoke-3", autohand::McpInvocationSuccess{"{"}});
+  } catch (const autohand::SdkError&) {
+    rejected = true;
+  }
+  assert(rejected);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -300,5 +328,6 @@ int main(int argc, char** argv) {
   test_session_attachment(executable);
   test_timed_yolo_mode(executable);
   test_vscode_mcp_tool_registration(executable);
+  test_mcp_invocation_responses(executable);
   return 0;
 }

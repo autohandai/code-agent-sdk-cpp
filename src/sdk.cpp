@@ -872,6 +872,13 @@ SetVscodeMcpToolsResult parse_set_vscode_mcp_tools_result(const std::string& jso
       required_member(root, "success", JsonKind::boolean).boolean};
 }
 
+McpInvocationResponseResult parse_mcp_invocation_response_result(
+    const std::string& json) {
+  const auto root = parse_json_document(json);
+  return McpInvocationResponseResult{
+      required_member(root, "success", JsonKind::boolean).boolean};
+}
+
 std::vector<std::string> split_exec_args(const std::string& executable, const std::vector<std::string>& args) {
   std::vector<std::string> all;
   all.push_back(executable);
@@ -1872,6 +1879,34 @@ SetVscodeMcpToolsResult AutohandSdk::set_vscode_mcp_tools(
     const SetVscodeMcpToolsParams& params) {
   return parse_set_vscode_mcp_tools_result(
       request("autohand.mcp.setVscodeTools", params.to_json()));
+}
+
+std::string McpInvocationResponseParams::to_json() const {
+  if (request_id.empty() || is_blank(request_id)) {
+    throw SdkError("MCP invocation request_id must not be blank");
+  }
+  std::ostringstream output;
+  output << "{\"requestId\":\"" << json_escape(request_id) << '"';
+  if (const auto* success = std::get_if<McpInvocationSuccess>(&outcome)) {
+    output << ",\"success\":true";
+    if (success->result_json) {
+      output << ",\"result\":" << serialize_json(parse_json_document(*success->result_json));
+    }
+  } else {
+    const auto& failure = std::get<McpInvocationFailure>(outcome);
+    if (failure.error.empty() || is_blank(failure.error)) {
+      throw SdkError("failed MCP invocation response requires a non-blank error");
+    }
+    output << ",\"success\":false,\"error\":\"" << json_escape(failure.error) << '"';
+  }
+  output << '}';
+  return output.str();
+}
+
+McpInvocationResponseResult AutohandSdk::respond_to_mcp_invocation(
+    const McpInvocationResponseParams& params) {
+  return parse_mcp_invocation_response_result(
+      request("autohand.mcp.invokeResponse", params.to_json()));
 }
 
 Run::Run(AutohandSdk& sdk, std::string prompt, PromptOptions options)

@@ -500,6 +500,27 @@ struct SetVscodeMcpToolsResult {
   bool success = false;
 };
 
+struct McpInvocationSuccess {
+  std::optional<std::string> result_json;
+};
+
+struct McpInvocationFailure {
+  std::string error;
+};
+
+using McpInvocationOutcome =
+    std::variant<McpInvocationSuccess, McpInvocationFailure>;
+
+struct McpInvocationResponseParams {
+  std::string request_id;
+  McpInvocationOutcome outcome;
+  std::string to_json() const;
+};
+
+struct McpInvocationResponseResult {
+  bool success = false;
+};
+
 struct SdkEvent {
   std::string type;
   std::string raw_json;
@@ -603,6 +624,8 @@ class AutohandSdk {
   YoloSetResult set_yolo_compat(const YoloSetParams& params);
   SetVscodeMcpToolsResult set_vscode_mcp_tools(
       const SetVscodeMcpToolsParams& params);
+  McpInvocationResponseResult respond_to_mcp_invocation(
+      const McpInvocationResponseParams& params);
 
  private:
   class Impl;
