@@ -649,6 +649,12 @@ struct PostToolHookEvent {
   std::string timestamp;
 };
 
+struct PrePromptHookEvent {
+  std::string instruction;
+  std::vector<std::string> mentioned_files;
+  std::string timestamp;
+};
+
 using SdkEventPayload =
     std::variant<
         std::monostate,
@@ -656,7 +662,8 @@ using SdkEventPayload =
         AutomodeCompleteEvent,
         AutomodeErrorEvent,
         PreToolHookEvent,
-        PostToolHookEvent>;
+        PostToolHookEvent,
+        PrePromptHookEvent>;
 
 struct SdkEvent {
   std::string type;

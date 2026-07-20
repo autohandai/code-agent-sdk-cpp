@@ -495,6 +495,23 @@ void test_post_tool_hook_events(const std::string& executable) {
   assert(hook->output == "contents");
 }
 
+void test_pre_prompt_hook_events(const std::string& executable) {
+  Fixture fixture(
+      executable,
+      "hook-pre-prompt",
+      "{}",
+      R"({"jsonrpc":"2.0","method":"autohand.hook.prePrompt","params":{"instruction":"Use the SDK contract","mentionedFiles":["README.md","src/sdk.cpp"],"timestamp":"2026-07-21T00:05:00Z"}})");
+  std::vector<autohand::SdkEvent> events;
+  fixture.sdk.stream_prompt("continue", [&](const auto& event) { events.push_back(event); });
+  assert(events.size() == 1);
+  assert(events.front().type == "hook_pre_prompt");
+  const auto* hook = std::get_if<autohand::PrePromptHookEvent>(&events.front().payload);
+  assert(hook != nullptr);
+  assert(hook->instruction == "Use the SDK contract");
+  assert(hook->mentioned_files.size() == 2);
+  assert(hook->mentioned_files.back() == "src/sdk.cpp");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -521,5 +538,6 @@ int main(int argc, char** argv) {
   test_automode_error_events(executable);
   test_pre_tool_hook_events(executable);
   test_post_tool_hook_events(executable);
+  test_pre_prompt_hook_events(executable);
   return 0;
 }

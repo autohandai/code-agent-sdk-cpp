@@ -1069,6 +1069,20 @@ PostToolHookEvent parse_post_tool_hook_event(const std::string& json) {
   return event;
 }
 
+PrePromptHookEvent parse_pre_prompt_hook_event(const std::string& json) {
+  const auto root = parse_json_document(json);
+  PrePromptHookEvent event;
+  event.instruction = required_member(root, "instruction", JsonKind::string).scalar;
+  for (const auto& value : required_member(root, "mentionedFiles", JsonKind::array).array) {
+    if (value.kind != JsonKind::string) {
+      throw SdkError("invalid RPC notification: expected mentioned file string");
+    }
+    event.mentioned_files.push_back(value.scalar);
+  }
+  event.timestamp = required_member(root, "timestamp", JsonKind::string).scalar;
+  return event;
+}
+
 std::vector<std::string> split_exec_args(const std::string& executable, const std::vector<std::string>& args) {
   std::vector<std::string> all;
   all.push_back(executable);
@@ -2409,6 +2423,7 @@ std::string event_type_from_method(const std::string& method, const std::string&
   if (method == "autohand.automode.error") return "automode_error";
   if (method == "autohand.hook.preTool") return "hook_pre_tool";
   if (method == "autohand.hook.postTool") return "hook_post_tool";
+  if (method == "autohand.hook.prePrompt") return "hook_pre_prompt";
   if (method.rfind("autohand.autoresearch.", 0) == 0) return "autoresearch";
   if (method == "autohand.error") return "error";
   constexpr std::string_view prefix = "autohand.";
@@ -2451,6 +2466,11 @@ SdkEvent sdk_event_from_notification(const std::string& method, const std::strin
     return SdkEvent{
         "hook_post_tool", normalized_params,
         parse_post_tool_hook_event(normalized_params)};
+  }
+  if (method == "autohand.hook.prePrompt") {
+    return SdkEvent{
+        "hook_pre_prompt", normalized_params,
+        parse_pre_prompt_hook_event(normalized_params)};
   }
   return SdkEvent{
       event_type_from_method(method, normalized_params), normalized_params, std::monostate{}};
