@@ -12,6 +12,10 @@ sdk.stream_prompt("Explain closures in one sentence.", [](const autohand::SdkEve
 });
 ```
 
+Calls to `stream_prompt()` on the same SDK instance are serialized. Each
+callback therefore receives the notifications for its own prompt without a
+concurrent stream clearing or draining them.
+
 ## Event Types
 
 - `message_update`: token or text delta.
@@ -50,3 +54,6 @@ run.stream([](const autohand::SdkEvent& event) {
 auto result = run.wait();
 std::cout << result.text << "\n";
 ```
+
+If a stream callback throws, the run becomes terminally failed. Later calls to
+`wait()` rethrow that same exception and do not send the prompt again.

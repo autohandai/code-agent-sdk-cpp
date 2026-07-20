@@ -35,7 +35,8 @@ Agent loop failures may arrive as `error` events in the stream. Handle them in y
 
 ## Recovery Patterns
 
-- Stop and restart the SDK after transport failures.
+- Stop and restart the SDK after transport failures. `start()` also cleans up
+  stale process and reader-thread state when stdout closed unexpectedly.
 - Use `interrupt()` or `Run::abort()` for user cancellation.
 - Keep final summaries honest when checks fail.
 - Keep raw event JSON available for debugging advanced CLI behavior.

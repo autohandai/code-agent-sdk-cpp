@@ -1,6 +1,7 @@
 #pragma once
 
 #include <chrono>
+#include <exception>
 #include <functional>
 #include <map>
 #include <memory>
@@ -11,6 +12,9 @@
 #include <vector>
 
 namespace autohand {
+
+// Performs idempotent eager initialization of the public SDK runtime.
+void initialize();
 
 class SdkError : public std::runtime_error {
  public:
@@ -151,6 +155,93 @@ struct PromptOptions {
   std::string to_json(std::string_view message) const;
 };
 
+struct CommunitySkill {
+  std::string id;
+  std::string name;
+  std::string description;
+  std::string category;
+  std::vector<std::string> tags;
+  std::optional<double> rating;
+  std::optional<long long> download_count;
+  std::optional<bool> is_featured;
+  std::optional<bool> is_curated;
+};
+
+struct SkillCategory {
+  std::string name;
+  long long count = 0;
+};
+
+struct GetSkillsRegistryParams {
+  std::optional<bool> force_refresh;
+  std::string to_json() const;
+};
+
+struct GetSkillsRegistryResult {
+  bool success = false;
+  std::vector<CommunitySkill> skills;
+  std::vector<SkillCategory> categories;
+  std::optional<std::string> error;
+};
+
+enum class SkillInstallScope { User, Project };
+
+struct InstallSkillParams {
+  std::string skill_name;
+  SkillInstallScope scope = SkillInstallScope::User;
+  std::optional<bool> force;
+  std::string to_json() const;
+};
+
+struct InstallSkillResult {
+  bool success = false;
+  std::optional<std::string> skill_name;
+  std::optional<std::string> path;
+  std::optional<std::string> error;
+};
+
+struct McpServerInfo {
+  std::string name;
+  std::string status;
+  long long tool_count = 0;
+};
+
+struct McpListServersResult {
+  std::vector<McpServerInfo> servers;
+};
+
+struct McpListToolsParams {
+  std::optional<std::string> server_name;
+  std::string to_json() const;
+};
+
+struct McpToolInfo {
+  std::string name;
+  std::string description;
+  std::string server_name;
+};
+
+struct McpListToolsResult {
+  std::vector<McpToolInfo> tools;
+};
+
+enum class McpTransport { Stdio, Sse, Http };
+
+struct McpServerConfigInfo {
+  std::string name;
+  McpTransport transport = McpTransport::Stdio;
+  std::optional<std::string> command;
+  std::vector<std::string> args;
+  std::optional<std::string> url;
+  std::map<std::string, std::string> env;
+  std::map<std::string, std::string> headers;
+  std::optional<bool> auto_connect;
+};
+
+struct McpGetServerConfigsResult {
+  std::vector<McpServerConfigInfo> configs;
+};
+
 struct SdkEvent {
   std::string type;
   std::string raw_json;
@@ -197,6 +288,11 @@ class AutohandSdk {
   std::string set_model(const std::string& model);
   std::string get_state();
   std::string get_messages();
+  GetSkillsRegistryResult get_skills_registry(const GetSkillsRegistryParams& params = {});
+  InstallSkillResult install_skill(const InstallSkillParams& params);
+  McpListServersResult list_mcp_servers();
+  McpListToolsResult list_mcp_tools(const McpListToolsParams& params = {});
+  McpGetServerConfigsResult get_mcp_server_configs();
   std::string get_supported_commands();
   bool supports_command(const std::string& command);
   void stream_command(
@@ -246,6 +342,7 @@ class Run {
   std::string prompt_;
   PromptOptions options_;
   bool streamed_ = false;
+  std::exception_ptr stream_error_;
   RunResult result_;
 };
 
@@ -270,6 +367,11 @@ class Agent {
   std::string queue_goal(const GoalParams& params);
   std::string start_queued_goal();
   std::string list_goal_templates();
+  GetSkillsRegistryResult get_skills_registry(const GetSkillsRegistryParams& params = {});
+  InstallSkillResult install_skill(const InstallSkillParams& params);
+  McpListServersResult list_mcp_servers();
+  McpListToolsResult list_mcp_tools(const McpListToolsParams& params = {});
+  McpGetServerConfigsResult get_mcp_server_configs();
   std::string start_autoresearch(const AutoresearchStartParams& params);
   std::string get_autoresearch_status();
   std::string stop_autoresearch();

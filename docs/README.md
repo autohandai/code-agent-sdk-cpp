@@ -11,5 +11,6 @@ The C++ SDK is a C++20 wrapper around the Autohand CLI JSON-RPC mode.
 - [SDLC Workflows](./sdlc-workflows.md)
 - [Error Handling](./error-handling.md)
 - [Examples](./examples.md)
+- [Startup Performance](./startup-performance.md)
 
 Canonical Agent SDK docs live at https://autohand.ai/docs/agent-sdk/.

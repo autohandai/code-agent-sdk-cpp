@@ -1,22 +1,27 @@
 #include <autohand/sdk.hpp>
 
 #include <sys/stat.h>
+#include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <signal.h>
 #include <unistd.h>
+#include <fcntl.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
+#include <cctype>
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <future>
+#include <iomanip>
 #include <iostream>
+#include <limits>
 #include <mutex>
-#include <regex>
 #include <sstream>
 #include <thread>
 #include <utility>
@@ -42,10 +47,6 @@ void append_value(std::vector<std::string>& args, const std::string& flag, const
     args.push_back(flag);
     args.push_back(std::to_string(*value));
   }
-}
-
-std::string make_prompt_json(const std::string& message) {
-  return "{\"message\":\"" + json_escape(message) + "\"}";
 }
 
 void append_json_separator(std::ostringstream& out, bool& first) {
@@ -107,71 +108,483 @@ std::string autoresearch_phase_for_method(const std::string& method) {
   return {};
 }
 
-std::string extract_raw_property(const std::string& json, const std::string& key) {
-  const std::string marker = "\"" + key + "\":";
-  const auto start = json.find(marker);
-  if (start == std::string::npos) {
-    return {};
+enum class JsonKind { null_value, boolean, number, string, array, object };
+
+struct JsonValue {
+  JsonKind kind = JsonKind::null_value;
+  bool boolean = false;
+  std::string scalar;
+  std::vector<JsonValue> array;
+  std::map<std::string, JsonValue> object;
+
+  const JsonValue* member(const std::string& key) const {
+    if (kind != JsonKind::object) return nullptr;
+    const auto it = object.find(key);
+    return it == object.end() ? nullptr : &it->second;
   }
-  auto value_start = start + marker.size();
-  while (value_start < json.size() && std::isspace(static_cast<unsigned char>(json[value_start]))) {
-    ++value_start;
+};
+
+void append_utf8(std::string& output, unsigned int codepoint) {
+  if (codepoint <= 0x7f) {
+    output.push_back(static_cast<char>(codepoint));
+  } else if (codepoint <= 0x7ff) {
+    output.push_back(static_cast<char>(0xc0 | (codepoint >> 6)));
+    output.push_back(static_cast<char>(0x80 | (codepoint & 0x3f)));
+  } else if (codepoint <= 0xffff) {
+    output.push_back(static_cast<char>(0xe0 | (codepoint >> 12)));
+    output.push_back(static_cast<char>(0x80 | ((codepoint >> 6) & 0x3f)));
+    output.push_back(static_cast<char>(0x80 | (codepoint & 0x3f)));
+  } else {
+    output.push_back(static_cast<char>(0xf0 | (codepoint >> 18)));
+    output.push_back(static_cast<char>(0x80 | ((codepoint >> 12) & 0x3f)));
+    output.push_back(static_cast<char>(0x80 | ((codepoint >> 6) & 0x3f)));
+    output.push_back(static_cast<char>(0x80 | (codepoint & 0x3f)));
   }
-  if (value_start >= json.size()) {
-    return {};
+}
+
+class JsonParser {
+ public:
+  explicit JsonParser(std::string_view input) : input_(input) {}
+
+  JsonValue parse_document() {
+    auto value = parse_value();
+    skip_whitespace();
+    if (position_ != input_.size()) fail("unexpected trailing content");
+    return value;
   }
-  if (json[value_start] == '{' || json[value_start] == '[') {
-    const char opener = json[value_start];
-    const char closer = opener == '{' ? '}' : ']';
-    int depth = 0;
-    bool in_string = false;
-    bool escaped = false;
-    for (auto i = value_start; i < json.size(); ++i) {
-      const char c = json[i];
-      if (in_string) {
-        if (escaped) {
-          escaped = false;
-        } else if (c == '\\') {
-          escaped = true;
-        } else if (c == '"') {
-          in_string = false;
-        }
-        continue;
-      }
-      if (c == '"') {
-        in_string = true;
-        continue;
-      }
-      if (c == opener) {
-        ++depth;
-      } else if (c == closer) {
-        --depth;
-        if (depth == 0) {
-          return json.substr(value_start, i - value_start + 1);
-        }
-      }
+
+  JsonValue parse_prefix(std::size_t& consumed) {
+    auto value = parse_value();
+    consumed = position_;
+    return value;
+  }
+
+ private:
+  [[noreturn]] void fail(const std::string& message) const {
+    throw SdkError("invalid JSON at byte " + std::to_string(position_) + ": " + message);
+  }
+
+  void skip_whitespace() {
+    while (position_ < input_.size() &&
+           (input_[position_] == ' ' || input_[position_] == '\t' ||
+            input_[position_] == '\n' || input_[position_] == '\r')) {
+      ++position_;
     }
   }
-  auto end = json.find_first_of(",}\n", value_start);
-  return json.substr(value_start, end == std::string::npos ? std::string::npos : end - value_start);
+
+  bool consume(char expected) {
+    skip_whitespace();
+    if (position_ < input_.size() && input_[position_] == expected) {
+      ++position_;
+      return true;
+    }
+    return false;
+  }
+
+  void expect(std::string_view expected) {
+    if (input_.substr(position_, expected.size()) != expected) {
+      fail("expected " + std::string(expected));
+    }
+    position_ += expected.size();
+  }
+
+  JsonValue parse_value() {
+    skip_whitespace();
+    if (position_ >= input_.size()) fail("expected a value");
+    switch (input_[position_]) {
+      case 'n':
+        expect("null");
+        return {};
+      case 't': {
+        expect("true");
+        JsonValue value;
+        value.kind = JsonKind::boolean;
+        value.boolean = true;
+        return value;
+      }
+      case 'f': {
+        expect("false");
+        JsonValue value;
+        value.kind = JsonKind::boolean;
+        return value;
+      }
+      case '"': {
+        JsonValue value;
+        value.kind = JsonKind::string;
+        value.scalar = parse_string();
+        return value;
+      }
+      case '[':
+        return parse_array();
+      case '{':
+        return parse_object();
+      default:
+        if (input_[position_] == '-' || std::isdigit(static_cast<unsigned char>(input_[position_]))) {
+          return parse_number();
+        }
+        fail("unexpected token");
+    }
+  }
+
+  unsigned int parse_hex4() {
+    if (position_ + 4 > input_.size()) fail("incomplete unicode escape");
+    unsigned int value = 0;
+    for (int i = 0; i < 4; ++i) {
+      const char c = input_[position_++];
+      value <<= 4;
+      if (c >= '0' && c <= '9') value |= static_cast<unsigned int>(c - '0');
+      else if (c >= 'a' && c <= 'f') value |= static_cast<unsigned int>(c - 'a' + 10);
+      else if (c >= 'A' && c <= 'F') value |= static_cast<unsigned int>(c - 'A' + 10);
+      else fail("invalid unicode escape");
+    }
+    return value;
+  }
+
+  std::string parse_string() {
+    if (input_[position_++] != '"') fail("expected string");
+    std::string output;
+    while (position_ < input_.size()) {
+      const unsigned char c = static_cast<unsigned char>(input_[position_++]);
+      if (c == '"') return output;
+      if (c < 0x20) fail("unescaped control character");
+      if (c != '\\') {
+        output.push_back(static_cast<char>(c));
+        continue;
+      }
+      if (position_ >= input_.size()) fail("incomplete escape");
+      switch (input_[position_++]) {
+        case '"': output.push_back('"'); break;
+        case '\\': output.push_back('\\'); break;
+        case '/': output.push_back('/'); break;
+        case 'b': output.push_back('\b'); break;
+        case 'f': output.push_back('\f'); break;
+        case 'n': output.push_back('\n'); break;
+        case 'r': output.push_back('\r'); break;
+        case 't': output.push_back('\t'); break;
+        case 'u': {
+          auto codepoint = parse_hex4();
+          if (codepoint >= 0xd800 && codepoint <= 0xdbff) {
+            if (position_ + 2 > input_.size() || input_[position_] != '\\' ||
+                input_[position_ + 1] != 'u') {
+              fail("missing low surrogate");
+            }
+            position_ += 2;
+            const auto low = parse_hex4();
+            if (low < 0xdc00 || low > 0xdfff) fail("invalid low surrogate");
+            codepoint = 0x10000 + ((codepoint - 0xd800) << 10) + (low - 0xdc00);
+          } else if (codepoint >= 0xdc00 && codepoint <= 0xdfff) {
+            fail("unexpected low surrogate");
+          }
+          append_utf8(output, codepoint);
+          break;
+        }
+        default: fail("invalid escape");
+      }
+    }
+    fail("unterminated string");
+  }
+
+  JsonValue parse_number() {
+    const auto start = position_;
+    if (input_[position_] == '-') ++position_;
+    if (position_ >= input_.size()) fail("incomplete number");
+    if (input_[position_] == '0') {
+      ++position_;
+    } else {
+      if (!std::isdigit(static_cast<unsigned char>(input_[position_]))) fail("invalid number");
+      while (position_ < input_.size() &&
+             std::isdigit(static_cast<unsigned char>(input_[position_]))) ++position_;
+    }
+    if (position_ < input_.size() && input_[position_] == '.') {
+      ++position_;
+      const auto fraction = position_;
+      while (position_ < input_.size() &&
+             std::isdigit(static_cast<unsigned char>(input_[position_]))) ++position_;
+      if (fraction == position_) fail("invalid fraction");
+    }
+    if (position_ < input_.size() && (input_[position_] == 'e' || input_[position_] == 'E')) {
+      ++position_;
+      if (position_ < input_.size() && (input_[position_] == '+' || input_[position_] == '-')) {
+        ++position_;
+      }
+      const auto exponent = position_;
+      while (position_ < input_.size() &&
+             std::isdigit(static_cast<unsigned char>(input_[position_]))) ++position_;
+      if (exponent == position_) fail("invalid exponent");
+    }
+    JsonValue value;
+    value.kind = JsonKind::number;
+    value.scalar = std::string(input_.substr(start, position_ - start));
+    return value;
+  }
+
+  JsonValue parse_array() {
+    ++position_;
+    JsonValue value;
+    value.kind = JsonKind::array;
+    if (consume(']')) return value;
+    while (true) {
+      value.array.push_back(parse_value());
+      if (consume(']')) return value;
+      if (!consume(',')) fail("expected ',' or ']'");
+    }
+  }
+
+  JsonValue parse_object() {
+    ++position_;
+    JsonValue value;
+    value.kind = JsonKind::object;
+    if (consume('}')) return value;
+    while (true) {
+      skip_whitespace();
+      if (position_ >= input_.size() || input_[position_] != '"') fail("expected object key");
+      auto key = parse_string();
+      if (!consume(':')) fail("expected ':'");
+      value.object.insert_or_assign(std::move(key), parse_value());
+      if (consume('}')) return value;
+      if (!consume(',')) fail("expected ',' or '}'");
+    }
+  }
+
+  std::string_view input_;
+  std::size_t position_ = 0;
+};
+
+JsonValue parse_json_document(std::string_view json) {
+  return JsonParser(json).parse_document();
 }
 
-long extract_id(const std::string& json) {
-  static const std::regex id_regex("\"id\"\\s*:\\s*\"?([0-9]+)\"?");
-  std::smatch match;
-  if (std::regex_search(json, match, id_regex)) {
-    return std::stol(match[1].str());
+std::string serialize_json(const JsonValue& value) {
+  switch (value.kind) {
+    case JsonKind::null_value: return "null";
+    case JsonKind::boolean: return value.boolean ? "true" : "false";
+    case JsonKind::number: return value.scalar;
+    case JsonKind::string: return "\"" + json_escape(value.scalar) + "\"";
+    case JsonKind::array: {
+      std::ostringstream output;
+      output << '[';
+      for (std::size_t i = 0; i < value.array.size(); ++i) {
+        if (i > 0) output << ',';
+        output << serialize_json(value.array[i]);
+      }
+      output << ']';
+      return output.str();
+    }
+    case JsonKind::object: {
+      std::ostringstream output;
+      output << '{';
+      bool first = true;
+      for (const auto& [key, member] : value.object) {
+        if (!first) output << ',';
+        first = false;
+        output << '"' << json_escape(key) << "\":" << serialize_json(member);
+      }
+      output << '}';
+      return output.str();
+    }
+  }
+  return "null";
+}
+
+long extract_id(const JsonValue& root) {
+  const auto* id = root.member("id");
+  if (!id) return 0;
+  if (id->kind == JsonKind::number || id->kind == JsonKind::string) {
+    try {
+      return std::stol(id->scalar);
+    } catch (const std::exception&) {
+      return 0;
+    }
   }
   return 0;
 }
 
-int extract_error_code(const std::string& error_json) {
-  static const std::regex code_regex("\"code\"\\s*:\\s*(-?[0-9]+)");
-  std::smatch match;
-  if (std::regex_search(error_json, match, code_regex)) {
-    return std::stoi(match[1].str());
+int extract_error_code(const JsonValue& error) {
+  const auto* code = error.member("code");
+  if (!code || code->kind != JsonKind::number) return 0;
+  try {
+    return std::stoi(code->scalar);
+  } catch (const std::exception&) {
+    return 0;
   }
-  return 0;
+}
+
+std::string json_string_member(const JsonValue& object, const std::string& key) {
+  const auto* member = object.member(key);
+  return member && member->kind == JsonKind::string ? member->scalar : std::string{};
+}
+
+const JsonValue& required_member(const JsonValue& object, const std::string& key, JsonKind kind) {
+  const auto* member = object.member(key);
+  if (!member || member->kind != kind) {
+    throw SdkError("invalid RPC result: expected '" + key + "'");
+  }
+  return *member;
+}
+
+std::optional<std::string> optional_string_member(const JsonValue& object, const std::string& key) {
+  const auto* member = object.member(key);
+  if (!member || member->kind == JsonKind::null_value) return std::nullopt;
+  if (member->kind != JsonKind::string) {
+    throw SdkError("invalid RPC result: expected string '" + key + "'");
+  }
+  return member->scalar;
+}
+
+std::optional<bool> optional_bool_member(const JsonValue& object, const std::string& key) {
+  const auto* member = object.member(key);
+  if (!member || member->kind == JsonKind::null_value) return std::nullopt;
+  if (member->kind != JsonKind::boolean) {
+    throw SdkError("invalid RPC result: expected boolean '" + key + "'");
+  }
+  return member->boolean;
+}
+
+std::optional<long long> optional_integer_member(const JsonValue& object, const std::string& key) {
+  const auto* member = object.member(key);
+  if (!member || member->kind == JsonKind::null_value) return std::nullopt;
+  if (member->kind != JsonKind::number) {
+    throw SdkError("invalid RPC result: expected number '" + key + "'");
+  }
+  try {
+    return std::stoll(member->scalar);
+  } catch (const std::exception&) {
+    throw SdkError("invalid RPC result: invalid integer '" + key + "'");
+  }
+}
+
+std::optional<double> optional_double_member(const JsonValue& object, const std::string& key) {
+  const auto* member = object.member(key);
+  if (!member || member->kind == JsonKind::null_value) return std::nullopt;
+  if (member->kind != JsonKind::number) {
+    throw SdkError("invalid RPC result: expected number '" + key + "'");
+  }
+  try {
+    return std::stod(member->scalar);
+  } catch (const std::exception&) {
+    throw SdkError("invalid RPC result: invalid number '" + key + "'");
+  }
+}
+
+std::vector<std::string> string_array_member(const JsonValue& object, const std::string& key) {
+  const auto* member = object.member(key);
+  if (!member) return {};
+  if (member->kind != JsonKind::array) {
+    throw SdkError("invalid RPC result: expected array '" + key + "'");
+  }
+  std::vector<std::string> values;
+  values.reserve(member->array.size());
+  for (const auto& value : member->array) {
+    if (value.kind != JsonKind::string) {
+      throw SdkError("invalid RPC result: expected string in '" + key + "'");
+    }
+    values.push_back(value.scalar);
+  }
+  return values;
+}
+
+std::map<std::string, std::string> string_map_member(const JsonValue& object, const std::string& key) {
+  const auto* member = object.member(key);
+  if (!member) return {};
+  if (member->kind != JsonKind::object) {
+    throw SdkError("invalid RPC result: expected object '" + key + "'");
+  }
+  std::map<std::string, std::string> values;
+  for (const auto& [name, value] : member->object) {
+    if (value.kind != JsonKind::string) {
+      throw SdkError("invalid RPC result: expected string value in '" + key + "'");
+    }
+    values.emplace(name, value.scalar);
+  }
+  return values;
+}
+
+GetSkillsRegistryResult parse_skills_registry_result(const std::string& json) {
+  const auto root = parse_json_document(json);
+  GetSkillsRegistryResult result;
+  result.success = required_member(root, "success", JsonKind::boolean).boolean;
+  result.error = optional_string_member(root, "error");
+  for (const auto& value : required_member(root, "skills", JsonKind::array).array) {
+    if (value.kind != JsonKind::object) throw SdkError("invalid RPC result: expected skill object");
+    CommunitySkill skill;
+    skill.id = required_member(value, "id", JsonKind::string).scalar;
+    skill.name = required_member(value, "name", JsonKind::string).scalar;
+    skill.description = required_member(value, "description", JsonKind::string).scalar;
+    skill.category = required_member(value, "category", JsonKind::string).scalar;
+    skill.tags = string_array_member(value, "tags");
+    skill.rating = optional_double_member(value, "rating");
+    skill.download_count = optional_integer_member(value, "downloadCount");
+    skill.is_featured = optional_bool_member(value, "isFeatured");
+    skill.is_curated = optional_bool_member(value, "isCurated");
+    result.skills.push_back(std::move(skill));
+  }
+  for (const auto& value : required_member(root, "categories", JsonKind::array).array) {
+    if (value.kind != JsonKind::object) throw SdkError("invalid RPC result: expected category object");
+    SkillCategory category;
+    category.name = required_member(value, "name", JsonKind::string).scalar;
+    category.count = optional_integer_member(value, "count").value_or(0);
+    result.categories.push_back(std::move(category));
+  }
+  return result;
+}
+
+InstallSkillResult parse_install_skill_result(const std::string& json) {
+  const auto root = parse_json_document(json);
+  InstallSkillResult result;
+  result.success = required_member(root, "success", JsonKind::boolean).boolean;
+  result.skill_name = optional_string_member(root, "skillName");
+  result.path = optional_string_member(root, "path");
+  result.error = optional_string_member(root, "error");
+  return result;
+}
+
+McpListServersResult parse_mcp_servers_result(const std::string& json) {
+  const auto root = parse_json_document(json);
+  McpListServersResult result;
+  for (const auto& value : required_member(root, "servers", JsonKind::array).array) {
+    if (value.kind != JsonKind::object) throw SdkError("invalid RPC result: expected MCP server object");
+    result.servers.push_back(McpServerInfo{
+        required_member(value, "name", JsonKind::string).scalar,
+        required_member(value, "status", JsonKind::string).scalar,
+        optional_integer_member(value, "toolCount").value_or(0)});
+  }
+  return result;
+}
+
+McpListToolsResult parse_mcp_tools_result(const std::string& json) {
+  const auto root = parse_json_document(json);
+  McpListToolsResult result;
+  for (const auto& value : required_member(root, "tools", JsonKind::array).array) {
+    if (value.kind != JsonKind::object) throw SdkError("invalid RPC result: expected MCP tool object");
+    result.tools.push_back(McpToolInfo{
+        required_member(value, "name", JsonKind::string).scalar,
+        required_member(value, "description", JsonKind::string).scalar,
+        required_member(value, "serverName", JsonKind::string).scalar});
+  }
+  return result;
+}
+
+McpGetServerConfigsResult parse_mcp_configs_result(const std::string& json) {
+  const auto root = parse_json_document(json);
+  McpGetServerConfigsResult result;
+  for (const auto& value : required_member(root, "configs", JsonKind::array).array) {
+    if (value.kind != JsonKind::object) throw SdkError("invalid RPC result: expected MCP config object");
+    McpServerConfigInfo config;
+    config.name = required_member(value, "name", JsonKind::string).scalar;
+    const auto transport = required_member(value, "transport", JsonKind::string).scalar;
+    if (transport == "stdio") config.transport = McpTransport::Stdio;
+    else if (transport == "sse") config.transport = McpTransport::Sse;
+    else if (transport == "http") config.transport = McpTransport::Http;
+    else throw SdkError("invalid RPC result: unknown MCP transport '" + transport + "'");
+    config.command = optional_string_member(value, "command");
+    config.args = string_array_member(value, "args");
+    config.url = optional_string_member(value, "url");
+    config.env = string_map_member(value, "env");
+    config.headers = string_map_member(value, "headers");
+    config.auto_connect = optional_bool_member(value, "autoConnect");
+    result.configs.push_back(std::move(config));
+  }
+  return result;
 }
 
 std::vector<std::string> split_exec_args(const std::string& executable, const std::vector<std::string>& args) {
@@ -179,6 +592,14 @@ std::vector<std::string> split_exec_args(const std::string& executable, const st
   all.push_back(executable);
   all.insert(all.end(), args.begin(), args.end());
   return all;
+}
+
+ssize_t send_without_sigpipe(int fd, const void* data, std::size_t size) {
+#ifdef MSG_NOSIGNAL
+  return send(fd, data, size, MSG_NOSIGNAL);
+#else
+  return send(fd, data, size, 0);
+#endif
 }
 
 }  // namespace
@@ -191,6 +612,14 @@ RpcError::RpcError(int code_value, const std::string& message, std::string data_
 
 StructuredOutputError::StructuredOutputError(const std::string& message, std::string raw)
     : SdkError(message), raw_response(std::move(raw)) {}
+
+void initialize() {
+  static const bool initialized = [] {
+    (void)parse_json_document("{}");
+    return true;
+  }();
+  (void)initialized;
+}
 
 Config Config::from_environment() {
   Config config;
@@ -371,6 +800,26 @@ std::string PromptOptions::to_json(std::string_view message) const {
   return out.str();
 }
 
+std::string GetSkillsRegistryParams::to_json() const {
+  if (!force_refresh) return "{}";
+  return std::string("{\"forceRefresh\":") + (*force_refresh ? "true}" : "false}");
+}
+
+std::string InstallSkillParams::to_json() const {
+  if (skill_name.empty()) throw SdkError("skill_name must not be empty");
+  std::ostringstream out;
+  out << "{\"skillName\":\"" << json_escape(skill_name) << "\",\"scope\":\""
+      << (scope == SkillInstallScope::User ? "user" : "project") << '"';
+  if (force) out << ",\"force\":" << (*force ? "true" : "false");
+  out << '}';
+  return out.str();
+}
+
+std::string McpListToolsParams::to_json() const {
+  if (!server_name) return "{}";
+  return "{\"serverName\":\"" + json_escape(*server_name) + "\"}";
+}
+
 std::string SdkEvent::text_delta() const { return json_get_string(raw_json, "delta"); }
 std::string SdkEvent::message_content() const { return json_get_string(raw_json, "content"); }
 std::string SdkEvent::tool_name() const {
@@ -392,12 +841,41 @@ class AutohandSdk::Impl {
 
   void start() {
     if (started_) return;
+    if (pid_ > 0 || stdin_fd_ >= 0 || stdout_fd_ >= 0 || stderr_fd_ >= 0 ||
+        stdout_thread_.joinable() || stderr_thread_.joinable()) {
+      stop();
+    }
 
-    int stdin_pipe[2];
-    int stdout_pipe[2];
-    int stderr_pipe[2];
-    if (pipe(stdin_pipe) != 0 || pipe(stdout_pipe) != 0 || pipe(stderr_pipe) != 0) {
-      throw SdkError(std::string("pipe failed: ") + std::strerror(errno));
+    int stdin_socket[2]{-1, -1};
+    int stdout_pipe[2]{-1, -1};
+    int stderr_pipe[2]{-1, -1};
+    int exec_error_pipe[2]{-1, -1};
+    const auto close_pair = [](int pair[2]) {
+      if (pair[0] >= 0) close(pair[0]);
+      if (pair[1] >= 0) close(pair[1]);
+    };
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, stdin_socket) != 0 || pipe(stdout_pipe) != 0 ||
+        pipe(stderr_pipe) != 0 || pipe(exec_error_pipe) != 0) {
+      const auto error = errno;
+      close_pair(stdin_socket);
+      close_pair(stdout_pipe);
+      close_pair(stderr_pipe);
+      close_pair(exec_error_pipe);
+      throw SdkError(std::string("transport pipe failed: ") + std::strerror(error));
+    }
+#ifdef SO_NOSIGPIPE
+    int no_sigpipe = 1;
+    (void)setsockopt(stdin_socket[0], SOL_SOCKET, SO_NOSIGPIPE, &no_sigpipe, sizeof(no_sigpipe));
+#endif
+    const auto descriptor_flags = fcntl(exec_error_pipe[1], F_GETFD);
+    if (descriptor_flags < 0 ||
+        fcntl(exec_error_pipe[1], F_SETFD, descriptor_flags | FD_CLOEXEC) < 0) {
+      const auto error = errno;
+      close_pair(stdin_socket);
+      close_pair(stdout_pipe);
+      close_pair(stderr_pipe);
+      close_pair(exec_error_pipe);
+      throw SdkError(std::string("configure exec status pipe failed: ") + std::strerror(error));
     }
 
     const auto executable = config_.cli_path.empty() ? std::string("autohand") : config_.cli_path;
@@ -405,21 +883,33 @@ class AutohandSdk::Impl {
 
     pid_ = fork();
     if (pid_ < 0) {
-      throw SdkError(std::string("fork failed: ") + std::strerror(errno));
+      const auto error = errno;
+      close_pair(stdin_socket);
+      close_pair(stdout_pipe);
+      close_pair(stderr_pipe);
+      close_pair(exec_error_pipe);
+      throw SdkError(std::string("fork failed: ") + std::strerror(error));
     }
 
     if (pid_ == 0) {
-      dup2(stdin_pipe[0], STDIN_FILENO);
-      dup2(stdout_pipe[1], STDOUT_FILENO);
-      dup2(stderr_pipe[1], STDERR_FILENO);
-      close(stdin_pipe[0]);
-      close(stdin_pipe[1]);
+      close(exec_error_pipe[0]);
+      const auto child_fail = [&](int error) {
+        while (::write(exec_error_pipe[1], &error, sizeof(error)) < 0 && errno == EINTR) {
+        }
+        _exit(127);
+      };
+      if (dup2(stdin_socket[1], STDIN_FILENO) < 0 || dup2(stdout_pipe[1], STDOUT_FILENO) < 0 ||
+          dup2(stderr_pipe[1], STDERR_FILENO) < 0) {
+        child_fail(errno);
+      }
+      close(stdin_socket[0]);
+      close(stdin_socket[1]);
       close(stdout_pipe[0]);
       close(stdout_pipe[1]);
       close(stderr_pipe[0]);
       close(stderr_pipe[1]);
-      if (!config_.cwd.empty()) {
-        chdir(config_.cwd.c_str());
+      if (!config_.cwd.empty() && chdir(config_.cwd.c_str()) != 0) {
+        child_fail(errno);
       }
       setenv("AUTOHAND_STREAM_TOOL_OUTPUT", "1", 1);
       if (config_.provider == "autohandai") {
@@ -437,34 +927,78 @@ class AutohandSdk::Impl {
       }
       argv.push_back(nullptr);
       execvp(executable.c_str(), argv.data());
-      _exit(127);
+      child_fail(errno);
     }
 
-    close(stdin_pipe[0]);
+    close(stdin_socket[1]);
     close(stdout_pipe[1]);
     close(stderr_pipe[1]);
-    stdin_fd_ = stdin_pipe[1];
+    close(exec_error_pipe[1]);
+    int child_error = 0;
+    ssize_t exec_status = 0;
+    do {
+      exec_status = read(exec_error_pipe[0], &child_error, sizeof(child_error));
+    } while (exec_status < 0 && errno == EINTR);
+    const auto exec_read_error = errno;
+    close(exec_error_pipe[0]);
+    if (exec_status != 0) {
+      close(stdin_socket[0]);
+      close(stdout_pipe[0]);
+      close(stderr_pipe[0]);
+      if (exec_status < 0) (void)kill(pid_, SIGKILL);
+      int status = 0;
+      while (waitpid(pid_, &status, 0) < 0 && errno == EINTR) {
+      }
+      pid_ = -1;
+      if (exec_status < 0) {
+        throw SdkError(std::string("read exec status failed: ") + std::strerror(exec_read_error));
+      }
+      throw SdkError(std::string("start CLI failed: ") + std::strerror(child_error));
+    }
+
+    stdin_fd_ = stdin_socket[0];
     stdout_fd_ = stdout_pipe[0];
     stderr_fd_ = stderr_pipe[0];
     started_ = true;
     stdout_thread_ = std::thread([this] { read_stdout(); });
     stderr_thread_ = std::thread([this] { read_stderr(); });
-    if (config_.feature_settings_json) {
-      (void)request("autohand.applyFlagSettings", "{\"settings\":" + *config_.feature_settings_json + "}");
+    try {
+      (void)request("autohand.getState", "{}");
+      if (config_.feature_settings_json) {
+        (void)request("autohand.applyFlagSettings", "{\"settings\":" + *config_.feature_settings_json + "}");
+      }
+    } catch (...) {
+      stop();
+      throw;
     }
   }
 
   void stop() {
-    if (!started_) return;
     started_ = false;
-    if (stdin_fd_ >= 0) {
-      close(stdin_fd_);
-      stdin_fd_ = -1;
+    {
+      std::lock_guard lock(write_mutex_);
+      if (stdin_fd_ >= 0) {
+        (void)shutdown(stdin_fd_, SHUT_RDWR);
+        close(stdin_fd_);
+        stdin_fd_ = -1;
+      }
     }
     if (pid_ > 0) {
-      kill(pid_, SIGTERM);
+      (void)kill(pid_, SIGTERM);
       int status = 0;
-      waitpid(pid_, &status, 0);
+      const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+      while (true) {
+        const auto result = waitpid(pid_, &status, WNOHANG);
+        if (result == pid_ || (result < 0 && errno == ECHILD)) break;
+        if (result < 0 && errno != EINTR) break;
+        if (std::chrono::steady_clock::now() >= deadline) {
+          (void)kill(pid_, SIGKILL);
+          while (waitpid(pid_, &status, 0) < 0 && errno == EINTR) {
+          }
+          break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      }
       pid_ = -1;
     }
     if (stdout_thread_.joinable()) stdout_thread_.join();
@@ -477,6 +1011,7 @@ class AutohandSdk::Impl {
       close(stderr_fd_);
       stderr_fd_ = -1;
     }
+    fail_pending("transport stopped");
   }
 
   bool is_started() const { return started_; }
@@ -495,11 +1030,22 @@ class AutohandSdk::Impl {
     payload << "{\"jsonrpc\":\"2.0\",\"id\":" << id << ",\"method\":\"" << json_escape(method)
             << "\",\"params\":" << (params_json.empty() ? "{}" : params_json) << "}\n";
     const auto line = payload.str();
-    {
+    try {
       std::lock_guard lock(write_mutex_);
-      if (write(stdin_fd_, line.data(), line.size()) < 0) {
-        throw SdkError(std::string("write failed: ") + std::strerror(errno));
+      std::size_t written = 0;
+      while (written < line.size()) {
+        const auto count = send_without_sigpipe(stdin_fd_, line.data() + written, line.size() - written);
+        if (count < 0 && errno == EINTR) continue;
+        if (count <= 0) {
+          const auto error = count == 0 ? EPIPE : errno;
+          throw SdkError(std::string("write failed: ") + std::strerror(error));
+        }
+        written += static_cast<std::size_t>(count);
       }
+    } catch (...) {
+      std::lock_guard lock(pending_mutex_);
+      pending_.erase(id);
+      throw;
     }
 
     if (future.wait_for(config_.timeout) == std::future_status::timeout) {
@@ -529,10 +1075,20 @@ class AutohandSdk::Impl {
     }
   }
 
+  std::unique_lock<std::mutex> lock_stream() {
+    return std::unique_lock<std::mutex>(stream_mutex_);
+  }
+
  private:
   void read_stdout() {
-    FILE* file = fdopen(stdout_fd_, "r");
-    if (!file) return;
+    const auto reader_fd = dup(stdout_fd_);
+    FILE* file = reader_fd >= 0 ? fdopen(reader_fd, "r") : nullptr;
+    if (!file) {
+      if (reader_fd >= 0) close(reader_fd);
+      started_ = false;
+      fail_pending("failed to open CLI stdout");
+      return;
+    }
     char* line = nullptr;
     size_t size = 0;
     while (started_ && getline(&line, &size, file) != -1) {
@@ -542,11 +1098,17 @@ class AutohandSdk::Impl {
     }
     free(line);
     fclose(file);
+    started_ = false;
+    fail_pending("CLI stdout closed");
   }
 
   void read_stderr() {
-    FILE* file = fdopen(stderr_fd_, "r");
-    if (!file) return;
+    const auto reader_fd = dup(stderr_fd_);
+    FILE* file = reader_fd >= 0 ? fdopen(reader_fd, "r") : nullptr;
+    if (!file) {
+      if (reader_fd >= 0) close(reader_fd);
+      return;
+    }
     char* line = nullptr;
     size_t size = 0;
     while (started_ && getline(&line, &size, file) != -1) {
@@ -558,8 +1120,30 @@ class AutohandSdk::Impl {
     fclose(file);
   }
 
+  void fail_pending(const std::string& message) {
+    std::map<long, std::shared_ptr<std::promise<std::string>>> pending;
+    {
+      std::lock_guard lock(pending_mutex_);
+      pending.swap(pending_);
+    }
+    for (const auto& [id, promise] : pending) {
+      (void)id;
+      try {
+        promise->set_exception(std::make_exception_ptr(SdkError(message)));
+      } catch (const std::future_error&) {
+      }
+    }
+  }
+
   void handle_line(const std::string& line) {
-    const auto id = extract_id(line);
+    JsonValue root;
+    try {
+      root = parse_json_document(line);
+    } catch (const std::exception& error) {
+      if (config_.debug) std::cerr << "[autohand] invalid JSON-RPC line: " << error.what() << '\n';
+      return;
+    }
+    const auto id = extract_id(root);
     if (id > 0) {
       std::shared_ptr<std::promise<std::string>> promise;
       {
@@ -571,20 +1155,23 @@ class AutohandSdk::Impl {
         }
       }
       if (promise) {
-        const auto error_json = extract_raw_property(line, "error");
-        if (!error_json.empty()) {
+        const auto* error = root.member("error");
+        if (error && error->kind == JsonKind::object) {
+          const auto error_json = serialize_json(*error);
           promise->set_exception(std::make_exception_ptr(RpcError(
-              extract_error_code(error_json), json_get_string(error_json, "message"), error_json)));
+              extract_error_code(*error), json_string_member(*error, "message"), error_json)));
         } else {
-          promise->set_value(extract_raw_property(line, "result"));
+          const auto* result = root.member("result");
+          promise->set_value(result ? serialize_json(*result) : "null");
         }
       }
       return;
     }
 
-    const auto method = json_get_string(line, "method");
+    const auto method = json_string_member(root, "method");
     if (method.empty()) return;
-    const auto params = extract_raw_property(line, "params");
+    const auto* params_value = root.member("params");
+    const auto params = params_value ? serialize_json(*params_value) : "null";
     auto event = sdk_event_from_notification(method, params);
     {
       std::lock_guard lock(event_mutex_);
@@ -604,6 +1191,7 @@ class AutohandSdk::Impl {
   std::thread stderr_thread_;
   std::mutex write_mutex_;
   std::mutex pending_mutex_;
+  std::mutex stream_mutex_;
   std::mutex event_mutex_;
   std::condition_variable event_cv_;
   std::map<long, std::shared_ptr<std::promise<std::string>>> pending_;
@@ -628,6 +1216,7 @@ void AutohandSdk::stream_prompt(
     const std::string& message,
     const std::function<void(const SdkEvent&)>& on_event,
     const PromptOptions& options) {
+  auto stream_guard = impl_->lock_stream();
   impl_->clear_events();
   auto prompt_future = std::async(std::launch::async, [this, &message, &options] {
     return prompt(message, options);
@@ -658,6 +1247,21 @@ std::string AutohandSdk::set_model(const std::string& model) {
 }
 std::string AutohandSdk::get_state() { return request("autohand.getState"); }
 std::string AutohandSdk::get_messages() { return request("autohand.getMessages"); }
+GetSkillsRegistryResult AutohandSdk::get_skills_registry(const GetSkillsRegistryParams& params) {
+  return parse_skills_registry_result(request("autohand.getSkillsRegistry", params.to_json()));
+}
+InstallSkillResult AutohandSdk::install_skill(const InstallSkillParams& params) {
+  return parse_install_skill_result(request("autohand.installSkill", params.to_json()));
+}
+McpListServersResult AutohandSdk::list_mcp_servers() {
+  return parse_mcp_servers_result(request("autohand.mcp.listServers"));
+}
+McpListToolsResult AutohandSdk::list_mcp_tools(const McpListToolsParams& params) {
+  return parse_mcp_tools_result(request("autohand.mcp.listTools", params.to_json()));
+}
+McpGetServerConfigsResult AutohandSdk::get_mcp_server_configs() {
+  return parse_mcp_configs_result(request("autohand.mcp.getServerConfigs"));
+}
 std::string AutohandSdk::get_supported_commands() { return request("autohand.getSupportedCommands"); }
 bool AutohandSdk::supports_command(const std::string& command) {
   const auto normalized = format_slash_command(command);
@@ -741,24 +1345,36 @@ Run::Run(AutohandSdk& sdk, std::string prompt, PromptOptions options)
 const std::string& Run::id() const { return id_; }
 
 void Run::stream(const std::function<void(const SdkEvent&)>& on_event) {
-  result_.id = id_;
-  result_.status = "completed";
-  sdk_->stream_prompt(prompt_, [&](const SdkEvent& event) {
-    result_.events.push_back(event);
-    if (event.type == "message_update") result_.text += event.text_delta();
-    if (event.type == "message_end") {
-      const auto content = event.message_content();
-      if (!content.empty()) result_.text = content;
-    }
-    on_event(event);
-  }, options_);
+  if (streamed_) {
+    if (stream_error_) std::rethrow_exception(stream_error_);
+    return;
+  }
   streamed_ = true;
+  result_.id = id_;
+  result_.status = "running";
+  try {
+    sdk_->stream_prompt(prompt_, [&](const SdkEvent& event) {
+      result_.events.push_back(event);
+      if (event.type == "message_update") result_.text += event.text_delta();
+      if (event.type == "message_end") {
+        const auto content = event.message_content();
+        if (!content.empty()) result_.text = content;
+      }
+      on_event(event);
+    }, options_);
+    result_.status = "completed";
+  } catch (...) {
+    result_.status = "failed";
+    stream_error_ = std::current_exception();
+    throw;
+  }
 }
 
 RunResult Run::wait() {
   if (!streamed_) {
     stream([](const SdkEvent&) {});
   }
+  if (stream_error_) std::rethrow_exception(stream_error_);
   return result_;
 }
 
@@ -801,6 +1417,19 @@ std::string Agent::clear_goal() { return sdk_.clear_goal(); }
 std::string Agent::queue_goal(const GoalParams& params) { return sdk_.queue_goal(params); }
 std::string Agent::start_queued_goal() { return sdk_.start_queued_goal(); }
 std::string Agent::list_goal_templates() { return sdk_.list_goal_templates(); }
+GetSkillsRegistryResult Agent::get_skills_registry(const GetSkillsRegistryParams& params) {
+  return sdk_.get_skills_registry(params);
+}
+InstallSkillResult Agent::install_skill(const InstallSkillParams& params) {
+  return sdk_.install_skill(params);
+}
+McpListServersResult Agent::list_mcp_servers() { return sdk_.list_mcp_servers(); }
+McpListToolsResult Agent::list_mcp_tools(const McpListToolsParams& params) {
+  return sdk_.list_mcp_tools(params);
+}
+McpGetServerConfigsResult Agent::get_mcp_server_configs() {
+  return sdk_.get_mcp_server_configs();
+}
 std::string Agent::start_autoresearch(const AutoresearchStartParams& params) {
   return sdk_.start_autoresearch(params);
 }
@@ -832,7 +1461,13 @@ std::string parse_json_text(const std::string& text) {
   trimmed.erase(0, trimmed.find_first_not_of(" \t\r\n"));
   trimmed.erase(trimmed.find_last_not_of(" \t\r\n") + 1);
   if (trimmed.empty()) throw StructuredOutputError("Expected JSON output, received an empty response.", text);
-  if (trimmed.front() == '{' || trimmed.front() == '[') return trimmed;
+  if (trimmed.front() == '{' || trimmed.front() == '[') {
+    try {
+      (void)parse_json_document(trimmed);
+      return trimmed;
+    } catch (const SdkError&) {
+    }
+  }
   const auto fence = trimmed.find("```");
   if (fence != std::string::npos) {
     auto start = trimmed.find('\n', fence);
@@ -841,33 +1476,31 @@ std::string parse_json_text(const std::string& text) {
       auto candidate = trimmed.substr(start + 1, end - start - 1);
       candidate.erase(0, candidate.find_first_not_of(" \t\r\n"));
       candidate.erase(candidate.find_last_not_of(" \t\r\n") + 1);
-      if (!candidate.empty() && (candidate.front() == '{' || candidate.front() == '[')) return candidate;
+      if (!candidate.empty() && (candidate.front() == '{' || candidate.front() == '[')) {
+        try {
+          (void)parse_json_document(candidate);
+          return candidate;
+        } catch (const SdkError&) {
+        }
+      }
     }
   }
   const auto object = trimmed.find('{');
   const auto array = trimmed.find('[');
   auto start = std::min(object == std::string::npos ? trimmed.size() : object,
                         array == std::string::npos ? trimmed.size() : array);
-  if (start < trimmed.size()) {
-    const char opener = trimmed[start];
-    const char closer = opener == '{' ? '}' : ']';
-    int depth = 0;
-    bool in_string = false;
-    bool escaped = false;
-    for (auto i = start; i < trimmed.size(); ++i) {
-      const char c = trimmed[i];
-      if (in_string) {
-        if (escaped) escaped = false;
-        else if (c == '\\') escaped = true;
-        else if (c == '"') in_string = false;
-        continue;
-      }
-      if (c == '"') {
-        in_string = true;
-      } else if (c == opener) {
-        ++depth;
-      } else if (c == closer && --depth == 0) {
-        return trimmed.substr(start, i - start + 1);
+  while (start < trimmed.size()) {
+    try {
+      std::size_t consumed = 0;
+      (void)JsonParser(std::string_view(trimmed).substr(start)).parse_prefix(consumed);
+      return trimmed.substr(start, consumed);
+    } catch (const SdkError&) {
+      const auto next_object = trimmed.find('{', start + 1);
+      const auto next_array = trimmed.find('[', start + 1);
+      start = std::min(next_object == std::string::npos ? trimmed.size() : next_object,
+                       next_array == std::string::npos ? trimmed.size() : next_array);
+      if (start >= trimmed.size()) {
+        break;
       }
     }
   }
@@ -882,14 +1515,23 @@ std::string with_json_instruction(const std::string& prompt, const std::string& 
 
 std::string json_escape(std::string_view value) {
   std::ostringstream out;
-  for (const char c : value) {
+  for (const unsigned char c : value) {
     switch (c) {
       case '"': out << "\\\""; break;
       case '\\': out << "\\\\"; break;
       case '\n': out << "\\n"; break;
       case '\r': out << "\\r"; break;
       case '\t': out << "\\t"; break;
-      default: out << c; break;
+      case '\b': out << "\\b"; break;
+      case '\f': out << "\\f"; break;
+      default:
+        if (c < 0x20) {
+          out << "\\u" << std::hex << std::setw(4) << std::setfill('0')
+              << static_cast<int>(c) << std::dec;
+        } else {
+          out << static_cast<char>(c);
+        }
+        break;
     }
   }
   return out.str();
@@ -911,25 +1553,11 @@ std::string format_slash_command(const std::string& command, const std::string& 
 }
 
 std::string json_get_string(const std::string& json, const std::string& key) {
-  const std::regex re("\"" + key + "\"\\s*:\\s*\"((?:\\\\.|[^\"])*)\"");
-  std::smatch match;
-  if (std::regex_search(json, match, re)) {
-    auto value = match[1].str();
-    std::string out;
-    for (size_t i = 0; i < value.size(); ++i) {
-      if (value[i] == '\\' && i + 1 < value.size()) {
-        const char n = value[++i];
-        if (n == 'n') out.push_back('\n');
-        else if (n == 'r') out.push_back('\r');
-        else if (n == 't') out.push_back('\t');
-        else out.push_back(n);
-      } else {
-        out.push_back(value[i]);
-      }
-    }
-    return out;
+  try {
+    return json_string_member(parse_json_document(json), key);
+  } catch (const SdkError&) {
+    return {};
   }
-  return {};
 }
 
 std::string event_type_from_method(const std::string& method, const std::string& params_json) {

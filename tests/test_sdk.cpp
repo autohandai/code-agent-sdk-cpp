@@ -2,11 +2,20 @@
 
 #include <algorithm>
 #include <cassert>
+#include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
+#include <signal.h>
+#include <sstream>
+#include <string_view>
 #include <sys/stat.h>
+#include <sys/wait.h>
+#include <thread>
 #include <unistd.h>
+#include <vector>
 
 namespace {
 
@@ -37,6 +46,21 @@ while IFS= read -r line; do
     *autohand.env*)
       printf '{"jsonrpc":"2.0","id":%s,"result":{"plan":"%s","apiKey":"%s","baseUrl":"%s"}}\n' "$id" "$AUTOHAND_AI_PLAN" "$AUTOHAND_AI_API_KEY" "$AUTOHAND_AI_BASE_URL"
       ;;
+    *autohand.getSkillsRegistry*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"success":true,"skills":[{"id":"skill-1","name":"review","description":"Review code","category":"quality","tags":["cpp"],"rating":4.5,"downloadCount":8,"isFeatured":true}],"categories":[{"name":"quality","count":1}]}}\n' "$id"
+      ;;
+    *autohand.installSkill*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"success":true,"skillName":"review","path":"/skills/review"}}\n' "$id"
+      ;;
+    *autohand.mcp.listServers*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"servers":[{"name":"github","status":"connected","toolCount":2}]}}\n' "$id"
+      ;;
+    *autohand.mcp.listTools*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"tools":[{"name":"search","description":"Search issues","serverName":"github"}]}}\n' "$id"
+      ;;
+    *autohand.mcp.getServerConfigs*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"configs":[{"name":"github","transport":"stdio","command":"mcp-github","args":["--stdio"],"env":{"TOKEN":"test"},"headers":{},"autoConnect":true}]}}\n' "$id"
+      ;;
     *)
       printf '{"jsonrpc":"2.0","id":%s,"result":{"ok":true,"method":"%s"}}\n' "$id" "$method"
       ;;
@@ -48,12 +72,206 @@ done
   return cli;
 }
 
+long request_id(const std::string& line) {
+  const auto marker = line.find("\"id\"");
+  if (marker == std::string::npos) return 0;
+  auto position = line.find(':', marker);
+  if (position == std::string::npos) return 0;
+  ++position;
+  while (position < line.size() && std::isspace(static_cast<unsigned char>(line[position]))) {
+    ++position;
+  }
+  return std::stol(line.substr(position));
+}
+
+int run_fixture(std::string_view mode) {
+  bool exit_after_readiness = false;
+  if (mode == "eof-once") {
+    const auto* marker = std::getenv("AUTOHAND_CPP_TEST_MARKER");
+    if (marker && !std::filesystem::exists(marker)) {
+      std::ofstream(marker).close();
+      exit_after_readiness = true;
+    }
+  }
+  int stream_count = 0;
+  std::string line;
+  while (std::getline(std::cin, line)) {
+    const auto id = request_id(line);
+    const auto method = autohand::json_get_string(line, "method");
+    if (method == "autohand.prompt") {
+      if (const auto* prompt_log = std::getenv("AUTOHAND_CPP_PROMPT_LOG")) {
+        std::ofstream(prompt_log, std::ios::app) << id << '\n';
+      }
+    }
+    if (mode == "readiness-error") {
+      std::cout << "{\"jsonrpc\":\"2.0\",\"id\":" << id
+                << ",\"error\":{\"code\":-32000,\"message\":\"not ready\"}}\n"
+                << std::flush;
+      continue;
+    }
+    if (mode == "stream" && method == "autohand.prompt") {
+      ++stream_count;
+      std::cout << "{\"jsonrpc\":\"2.0\",\"method\":\"autohand.messageUpdate\","
+                   "\"params\":{\"type\":\"message_update\",\"delta\":\"stream-"
+                << stream_count << "\"}}\n"
+                << "{\"jsonrpc\":\"2.0\",\"id\":" << id
+                << ",\"result\":{\"ok\":true}}\n"
+                << std::flush;
+      continue;
+    }
+    if (mode == "eof" && method != "autohand.getState") return 0;
+    std::cout << " { \"jsonrpc\" : \"2.0\", \"id\" : " << id
+              << ", \"result\" : { \"ready\" : true, \"method\" : \""
+              << autohand::json_escape(method) << "\", \"unicode\" : \"\\uD83D\\uDE80\" } } \n"
+              << std::flush;
+    if (exit_after_readiness && method == "autohand.getState") return 0;
+    if (mode == "hang" && method == "autohand.getState") {
+      signal(SIGTERM, SIG_IGN);
+      while (true) pause();
+    }
+  }
+  return 0;
+}
+
+std::chrono::nanoseconds run_public_import_probe(const std::string& executable) {
+  int output_pipe[2];
+  assert(pipe(output_pipe) == 0);
+  const auto pid = fork();
+  assert(pid >= 0);
+  if (pid == 0) {
+    close(output_pipe[0]);
+    dup2(output_pipe[1], STDOUT_FILENO);
+    close(output_pipe[1]);
+    setenv("AUTOHAND_CPP_PUBLIC_IMPORT_PROBE", "1", 1);
+    unsetenv("AUTOHAND_CPP_TEST_FIXTURE");
+    execl(executable.c_str(), executable.c_str(), nullptr);
+    _exit(127);
+  }
+  close(output_pipe[1]);
+  std::string output;
+  char buffer[256];
+  ssize_t count = 0;
+  while ((count = read(output_pipe[0], buffer, sizeof(buffer))) > 0) {
+    output.append(buffer, static_cast<std::size_t>(count));
+  }
+  close(output_pipe[0]);
+  int status = 0;
+  assert(waitpid(pid, &status, 0) == pid);
+  assert(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+  const auto marker = output.find("PUBLIC_IMPORT_NS=");
+  assert(marker != std::string::npos);
+  return std::chrono::nanoseconds(std::stoll(output.substr(marker + 17)));
+}
+
+autohand::Config fixture_config(const std::string& executable, const std::string& mode = "normal") {
+  autohand::Config config;
+  config.cli_path = executable;
+  config.environment["AUTOHAND_CPP_TEST_FIXTURE"] = mode;
+  config.timeout = std::chrono::seconds(2);
+  return config;
+}
+
+std::chrono::nanoseconds measure_sdk_start(const std::string& executable) {
+  autohand::AutohandSdk sdk(fixture_config(executable));
+  const auto started = std::chrono::steady_clock::now();
+  sdk.start();
+  const auto elapsed = std::chrono::steady_clock::now() - started;
+  sdk.stop();
+  return elapsed;
+}
+
+std::chrono::nanoseconds measure_fixture_first_rpc(const std::string& executable) {
+  autohand::AutohandSdk sdk(fixture_config(executable));
+  const auto started = std::chrono::steady_clock::now();
+  sdk.start();
+  const auto elapsed = std::chrono::steady_clock::now() - started;
+  sdk.stop();
+  return elapsed;
+}
+
+std::chrono::nanoseconds percentile(std::vector<std::chrono::nanoseconds> samples, std::size_t percent) {
+  std::sort(samples.begin(), samples.end());
+  const auto index = ((samples.size() * percent + 99) / 100) - 1;
+  return samples[index];
+}
+
+std::chrono::nanoseconds median(std::vector<std::chrono::nanoseconds> samples) {
+  std::sort(samples.begin(), samples.end());
+  return samples[samples.size() / 2];
+}
+
+double milliseconds(std::chrono::nanoseconds value) {
+  return static_cast<double>(value.count()) / 1'000'000.0;
+}
+
+void test_startup_budgets(const std::string& executable) {
+  for (int i = 0; i < 5; ++i) {
+    (void)run_public_import_probe(executable);
+    (void)measure_sdk_start(executable);
+    (void)measure_fixture_first_rpc(executable);
+  }
+  std::vector<std::chrono::nanoseconds> public_import;
+  std::vector<std::chrono::nanoseconds> sdk_start;
+  std::vector<std::chrono::nanoseconds> fixture_first_rpc;
+  for (int i = 0; i < 50; ++i) {
+    public_import.push_back(run_public_import_probe(executable));
+    sdk_start.push_back(measure_sdk_start(executable));
+    fixture_first_rpc.push_back(measure_fixture_first_rpc(executable));
+  }
+  const auto public_p95 = percentile(public_import, 95);
+  const auto sdk_p95 = percentile(sdk_start, 95);
+  const auto fixture_p95 = percentile(fixture_first_rpc, 95);
+  const auto public_max = *std::max_element(public_import.begin(), public_import.end());
+  const auto sdk_max = *std::max_element(sdk_start.begin(), sdk_start.end());
+  const auto fixture_max = *std::max_element(fixture_first_rpc.begin(), fixture_first_rpc.end());
+  const auto budget = std::chrono::milliseconds(50);
+  const auto public_passed = public_p95 < budget;
+  const auto sdk_passed = sdk_p95 < budget;
+  const auto fixture_passed = fixture_p95 < budget;
+  const auto passed = public_passed && sdk_passed && fixture_passed;
+  std::cout << std::fixed << std::setprecision(6)
+            << "{\"language\":\"cpp\",\"budgetMs\":50,\"metrics\":{"
+            << "\"publicImportMs\":{\"samples\":50,\"medianMs\":"
+            << milliseconds(median(public_import)) << ",\"p95Ms\":" << milliseconds(public_p95)
+            << ",\"maxMs\":" << milliseconds(public_max) << ",\"passed\":"
+            << (public_passed ? "true" : "false") << "},"
+            << "\"sdkStartReturnMs\":{\"samples\":50,\"medianMs\":"
+            << milliseconds(median(sdk_start)) << ",\"p95Ms\":" << milliseconds(sdk_p95)
+            << ",\"maxMs\":" << milliseconds(sdk_max) << ",\"passed\":"
+            << (sdk_passed ? "true" : "false") << "},"
+            << "\"fixtureSpawnToFirstRpcMs\":{\"samples\":50,\"medianMs\":"
+            << milliseconds(median(fixture_first_rpc)) << ",\"p95Ms\":" << milliseconds(fixture_p95)
+            << ",\"maxMs\":" << milliseconds(fixture_max) << ",\"passed\":"
+            << (fixture_passed ? "true" : "false") << "}},\"passed\":"
+            << (passed ? "true" : "false") << "}\n";
+  assert(passed);
+}
+
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
+  (void)argc;
+  if (const auto* mode = std::getenv("AUTOHAND_CPP_TEST_FIXTURE")) return run_fixture(mode);
+  if (std::getenv("AUTOHAND_CPP_PUBLIC_IMPORT_PROBE")) {
+    const auto started = std::chrono::steady_clock::now();
+    autohand::initialize();
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+    std::cout << "PUBLIC_IMPORT_NS="
+              << std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count() << '\n';
+    return 0;
+  }
+  const auto executable = std::filesystem::absolute(argv[0]).string();
   assert(autohand::parse_json_text(R"({"ok":true})") == R"({"ok":true})");
   assert(autohand::parse_json_text("```json\n{\"ok\":true}\n```") == R"({"ok":true})");
   assert(autohand::parse_json_text("Result: {\"ok\":true} done.") == R"({"ok":true})");
+  assert(autohand::json_get_string(R"( { "value" : "\uD83D\uDE80" } )", "value") == "🚀");
+  bool invalid_json_rejected = false;
+  try {
+    (void)autohand::parse_json_text(R"({"unterminated":true)");
+  } catch (const autohand::StructuredOutputError&) {
+    invalid_json_rejected = true;
+  }
+  assert(invalid_json_rejected);
 
   auto config = autohand::Config::from_environment()
                     .with_cli_path(make_fake_cli().string())
@@ -108,7 +326,8 @@ int main() {
   goal.token_budget = 20000;
   assert(goal.to_json() == R"({"objective":"Finish parity","token_budget":20000})");
 
-  autohand::AutoresearchStartParams autoresearch{"Reduce test runtime"};
+  autohand::AutoresearchStartParams autoresearch;
+  autoresearch.objective = "Reduce test runtime";
   autoresearch.metric_name = "total_ms";
   autoresearch.max_iterations = 12;
   autoresearch.subagents = autohand::AutoresearchSubagentOptions{true, std::nullopt, std::nullopt};
@@ -141,6 +360,25 @@ int main() {
   assert(autohand::json_get_string(sdk.start_queued_goal(), "method") == "autohand.goal.startQueued");
   assert(autohand::json_get_string(sdk.list_goal_templates(), "method") ==
          "autohand.goal.listTemplates");
+  autohand::GetSkillsRegistryParams registry_params{true};
+  assert(registry_params.to_json() == R"({"forceRefresh":true})");
+  const auto registry = sdk.get_skills_registry(registry_params);
+  assert(registry.success && registry.skills.size() == 1);
+  assert(registry.skills[0].id == "skill-1");
+  assert(registry.skills[0].rating == 4.5);
+  autohand::InstallSkillParams install_params;
+  install_params.skill_name = "review";
+  install_params.scope = autohand::SkillInstallScope::Project;
+  assert(install_params.to_json() == R"({"skillName":"review","scope":"project"})");
+  const auto installed = sdk.install_skill(install_params);
+  assert(installed.success && installed.path == "/skills/review");
+  assert(sdk.list_mcp_servers().servers[0].tool_count == 2);
+  autohand::McpListToolsParams tools_params{std::string("github")};
+  assert(tools_params.to_json() == R"({"serverName":"github"})");
+  assert(sdk.list_mcp_tools(tools_params).tools[0].server_name == "github");
+  const auto server_configs = sdk.get_mcp_server_configs();
+  assert(server_configs.configs[0].transport == autohand::McpTransport::Stdio);
+  assert(server_configs.configs[0].env.at("TOKEN") == "test");
   assert(autohand::json_get_string(sdk.start_autoresearch(autoresearch), "method") ==
          "autohand.autoresearch.start");
   assert(autohand::json_get_string(sdk.get_autoresearch_status(), "method") ==
@@ -185,6 +423,145 @@ int main() {
   sdk.stop();
   assert(text == "hello");
   assert(answered_permission);
+
+  {
+    autohand::Config missing;
+    missing.cli_path = "/definitely/missing/autohand";
+    autohand::AutohandSdk missing_sdk(missing);
+    bool rejected = false;
+    try {
+      missing_sdk.start();
+    } catch (const autohand::SdkError&) {
+      rejected = true;
+    }
+    assert(rejected && !missing_sdk.is_started());
+  }
+  {
+    auto invalid_cwd = fixture_config(executable);
+    invalid_cwd.cwd = "/definitely/missing/autohand-cwd";
+    autohand::AutohandSdk invalid_cwd_sdk(invalid_cwd);
+    bool rejected = false;
+    try {
+      invalid_cwd_sdk.start();
+    } catch (const autohand::SdkError&) {
+      rejected = true;
+    }
+    assert(rejected && !invalid_cwd_sdk.is_started());
+  }
+  {
+    autohand::AutohandSdk readiness_sdk(fixture_config(executable, "readiness-error"));
+    bool rejected = false;
+    try {
+      readiness_sdk.start();
+    } catch (const autohand::RpcError&) {
+      rejected = true;
+    }
+    assert(rejected && !readiness_sdk.is_started());
+  }
+  {
+    autohand::AutohandSdk large_sdk(fixture_config(executable));
+    large_sdk.start();
+    const std::string large_value(2 * 1024 * 1024, 'x');
+    const auto result = large_sdk.request(
+        "autohand.large", "{\"value\":\"" + large_value + "\"}");
+    assert(autohand::json_get_string(result, "method") == "autohand.large");
+    large_sdk.stop();
+  }
+  {
+    autohand::AutohandSdk eof_sdk(fixture_config(executable, "eof"));
+    eof_sdk.start();
+    const auto started = std::chrono::steady_clock::now();
+    bool rejected = false;
+    try {
+      (void)eof_sdk.request("autohand.afterEof");
+    } catch (const autohand::SdkError&) {
+      rejected = true;
+    }
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+    assert(rejected);
+    assert(elapsed < std::chrono::seconds(1));
+    eof_sdk.stop();
+  }
+  {
+    autohand::AutohandSdk stream_sdk(fixture_config(executable, "stream"));
+    stream_sdk.start();
+    std::vector<std::string> first_events;
+    std::vector<std::string> second_events;
+    std::thread first([&] {
+      stream_sdk.stream_prompt("first", [&](const autohand::SdkEvent& event) {
+        first_events.push_back(event.text_delta());
+      });
+    });
+    std::thread second([&] {
+      stream_sdk.stream_prompt("second", [&](const autohand::SdkEvent& event) {
+        second_events.push_back(event.text_delta());
+      });
+    });
+    first.join();
+    second.join();
+    assert(first_events.size() == 1);
+    assert(second_events.size() == 1);
+    assert(first_events[0] != second_events[0]);
+    stream_sdk.stop();
+  }
+  {
+    const auto prompt_log = std::filesystem::temp_directory_path() /
+                            ("autohand-cpp-run-prompts-" + std::to_string(::getpid()));
+    std::filesystem::remove(prompt_log);
+    auto run_config = fixture_config(executable, "stream");
+    run_config.environment["AUTOHAND_CPP_PROMPT_LOG"] = prompt_log.string();
+    autohand::Agent agent(run_config);
+    auto run = agent.send("throw once");
+    bool stream_rejected = false;
+    try {
+      run.stream([](const autohand::SdkEvent&) { throw std::runtime_error("callback failed"); });
+    } catch (const std::runtime_error& error) {
+      stream_rejected = std::string(error.what()) == "callback failed";
+    }
+    assert(stream_rejected);
+    bool wait_rejected = false;
+    try {
+      (void)run.wait();
+    } catch (const std::runtime_error& error) {
+      wait_rejected = std::string(error.what()) == "callback failed";
+    }
+    assert(wait_rejected);
+    std::ifstream prompt_log_stream(prompt_log);
+    std::size_t prompt_count = 0;
+    std::string prompt_line;
+    while (std::getline(prompt_log_stream, prompt_line)) ++prompt_count;
+    assert(prompt_count == 1);
+    agent.close();
+    std::filesystem::remove(prompt_log);
+  }
+  {
+    const auto marker = std::filesystem::temp_directory_path() /
+                        ("autohand-cpp-eof-once-" + std::to_string(::getpid()));
+    std::filesystem::remove(marker);
+    auto restart_config = fixture_config(executable, "eof-once");
+    restart_config.environment["AUTOHAND_CPP_TEST_MARKER"] = marker.string();
+    autohand::AutohandSdk restart_sdk(restart_config);
+    restart_sdk.start();
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (restart_sdk.is_started() && std::chrono::steady_clock::now() < deadline) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    assert(!restart_sdk.is_started());
+    restart_sdk.start();
+    assert(restart_sdk.is_started());
+    assert(autohand::json_get_string(restart_sdk.get_state(), "method") == "autohand.getState");
+    restart_sdk.stop();
+    std::filesystem::remove(marker);
+  }
+  {
+    autohand::AutohandSdk hanging_sdk(fixture_config(executable, "hang"));
+    hanging_sdk.start();
+    const auto started = std::chrono::steady_clock::now();
+    hanging_sdk.stop();
+    assert(std::chrono::steady_clock::now() - started < std::chrono::seconds(1));
+  }
+
+  test_startup_budgets(executable);
 
   std::cout << "autohand_sdk_tests passed\n";
 }

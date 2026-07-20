@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.22)
 project(autohand_code_agent_sdk_cpp VERSION 0.1.0 LANGUAGES CXX)
 
+find_package(Threads REQUIRED)
+
 option(AUTOHAND_BUILD_EXAMPLES "Build Autohand C++ SDK examples" ON)
 option(AUTOHAND_BUILD_TESTS "Build Autohand C++ SDK tests" ON)
 
@@ -15,6 +17,7 @@ target_include_directories(autohand_sdk
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
+target_link_libraries(autohand_sdk PRIVATE Threads::Threads)
 
 if(APPLE OR UNIX)
   target_compile_definitions(autohand_sdk PRIVATE AUTOHAND_POSIX=1)
@@ -44,4 +47,3 @@ endif()
 install(TARGETS autohand_sdk EXPORT AutohandSdkTargets)
 install(DIRECTORY include/ DESTINATION include)
 install(EXPORT AutohandSdkTargets NAMESPACE autohand:: DESTINATION lib/cmake/AutohandSdk)
-

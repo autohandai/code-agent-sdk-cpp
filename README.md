@@ -27,6 +27,8 @@ Use it when you want Autohand inside native developer tools, editors, desktop ap
 - Slash-command helpers, persistent goals, and the replayable autoresearch ledger
 - Structured JSON extraction helper
 - Example parity with the TypeScript SDK examples
+- Typed community-skill discovery/installation and MCP server/tool/configuration inspection
+- Transactional CLI readiness, bounded shutdown, and deterministic sub-50 ms startup gates
 
 ## Requirements
 
@@ -131,6 +133,22 @@ agent.stop_autoresearch();
 See [Replayable Autoresearch](./docs/autoresearch.md) for adaptive sampling,
 constraints, replay, rescoring, comparison, pinning, and retention safety.
 
+## Skill And MCP Discovery
+
+`Agent` and `AutohandSdk` expose `get_skills_registry`, `install_skill`,
+`list_mcp_servers`, `list_mcp_tools`, and `get_mcp_server_configs`. Their
+request and result structures are typed, including `SkillInstallScope` and
+`McpTransport` enums that match the current CLI wire contract.
+
+## Startup Performance
+
+The deterministic fake-CLI gate measures `publicImportMs`, `sdkStartReturnMs`,
+and `fixtureSpawnToFirstRpcMs` with five warmups and 50 samples. Every
+wrapper-controlled p95 must remain below 50 ms. See
+[Startup Performance](./docs/startup-performance.md) for exact boundaries,
+current results, and the separate environment-dependent live CLI/provider
+readiness concern.
+
 ## Examples
 
 The `examples/` directory mirrors the TypeScript SDK example inventory:
@@ -181,6 +199,7 @@ Live examples require an authenticated Autohand CLI and may ask for tool permiss
 - [Error Handling](./docs/error-handling.md)
 - [Examples](./docs/examples.md)
 - [Replayable Autoresearch](./docs/autoresearch.md)
+- [Startup Performance](./docs/startup-performance.md)
 - [Contributing](./CONTRIBUTING.md)
 - [Security](./SECURITY.md)
 

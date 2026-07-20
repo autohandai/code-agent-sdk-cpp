@@ -38,6 +38,10 @@ auto config = autohand::Config::from_environment()
 
 Low-level JSON-RPC wrapper.
 
+`autohand::initialize()` is an optional, idempotent eager-initialization hook.
+Normal SDK construction also works without calling it explicitly; the startup
+benchmark uses it to isolate public library initialization in a fresh process.
+
 Important methods:
 
 - `start()` / `stop()`
@@ -54,6 +58,33 @@ Important methods:
 - `stream_command(command, args, on_event, options)`
 - `apply_flag_settings(settings_json)`
 - `permission_response(request_id, decision)`
+
+### Skill registry and MCP discovery
+
+- `get_skills_registry(params)`
+- `install_skill(params)`
+- `list_mcp_servers()`
+- `list_mcp_tools(params)`
+- `get_mcp_server_configs()`
+
+```cpp
+autohand::GetSkillsRegistryParams registry_params;
+registry_params.force_refresh = true;
+auto registry = sdk.get_skills_registry(registry_params);
+
+autohand::InstallSkillParams install;
+install.skill_name = "code-review";
+install.scope = autohand::SkillInstallScope::Project;
+auto installed = sdk.install_skill(install);
+
+auto servers = sdk.list_mcp_servers();
+auto tools = sdk.list_mcp_tools({std::string("github")});
+auto configs = sdk.get_mcp_server_configs();
+```
+
+MCP configuration transport is represented by the closed
+`McpTransport::{Stdio, Sse, Http}` enum. Optional registry metadata and server
+configuration fields use `std::optional`.
 
 ### Persistent goals
 
@@ -108,6 +139,7 @@ Methods:
 - `deny_permission(request_id)`
 - `set_plan_mode(enabled)`
 - persistent-goal and replayable-autoresearch methods matching `AutohandSdk`
+- skill registry and MCP discovery methods matching `AutohandSdk`
 - `close()`
 
 ## `autohand::Run`
