@@ -9,6 +9,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <variant>
 #include <vector>
 
 namespace autohand {
@@ -368,6 +369,32 @@ struct DirectoryAccessAcknowledgedResult {
   bool success = false;
 };
 
+struct AcceptAllChanges {};
+struct RejectAllChanges {};
+struct AcceptSelectedChanges {
+  std::vector<std::string> selected_change_ids;
+};
+using ChangesDecision =
+    std::variant<AcceptAllChanges, RejectAllChanges, AcceptSelectedChanges>;
+
+struct ChangesDecisionParams {
+  std::string batch_id;
+  ChangesDecision decision;
+  std::string to_json() const;
+};
+
+struct ChangeDecisionError {
+  std::string change_id;
+  std::string error;
+};
+
+struct ChangesDecisionResult {
+  bool success = false;
+  long long applied_count = 0;
+  long long skipped_count = 0;
+  std::vector<ChangeDecisionError> errors;
+};
+
 struct SdkEvent {
   std::string type;
   std::string raw_json;
@@ -463,6 +490,7 @@ class AutohandSdk {
       const DirectoryAccessResponseParams& params);
   DirectoryAccessAcknowledgedResult acknowledge_directory_access(
       const std::string& request_id);
+  ChangesDecisionResult decide_changes(const ChangesDecisionParams& params);
 
  private:
   class Impl;

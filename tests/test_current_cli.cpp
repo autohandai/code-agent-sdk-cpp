@@ -139,6 +139,34 @@ void test_directory_access_acknowledgement(const std::string& executable) {
   assert(rejected);
 }
 
+void test_multi_file_change_decisions(const std::string& executable) {
+  Fixture fixture(
+      executable,
+      "changes-decision",
+      R"({"success":false,"appliedCount":1,"skippedCount":1,"errors":[{"changeId":"change-2","error":"conflict"}]})");
+  const auto result = fixture.sdk.decide_changes(
+      {"batch-1", autohand::AcceptSelectedChanges{{"change-1", "change-2"}}});
+  assert(!result.success);
+  assert(result.applied_count == 1);
+  assert(result.skipped_count == 1);
+  assert(result.errors.size() == 1);
+  assert(result.errors.front().change_id == "change-2");
+  assert(result.errors.front().error == "conflict");
+  fixture.assert_request(
+      "autohand.changesDecision",
+      {R"("batchId":"batch-1")", R"("action":"accept_selected")",
+       R"("selectedChangeIds":["change-1","change-2"])"});
+
+  bool rejected = false;
+  try {
+    (void)fixture.sdk.decide_changes(
+        {"batch-2", autohand::AcceptSelectedChanges{{}}});
+  } catch (const autohand::SdkError&) {
+    rejected = true;
+  }
+  assert(rejected);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -148,5 +176,6 @@ int main(int argc, char** argv) {
   test_permission_acknowledgement(executable);
   test_directory_access_response(executable);
   test_directory_access_acknowledgement(executable);
+  test_multi_file_change_decisions(executable);
   return 0;
 }

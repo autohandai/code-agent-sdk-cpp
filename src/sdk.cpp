@@ -743,6 +743,28 @@ DirectoryAccessAcknowledgedResult parse_directory_access_acknowledged_result(
       required_member(root, "success", JsonKind::boolean).boolean};
 }
 
+ChangesDecisionResult parse_changes_decision_result(const std::string& json) {
+  const auto root = parse_json_document(json);
+  ChangesDecisionResult result;
+  result.success = required_member(root, "success", JsonKind::boolean).boolean;
+  result.applied_count = required_integer_member(root, "appliedCount");
+  result.skipped_count = required_integer_member(root, "skippedCount");
+  const auto* errors = root.member("errors");
+  if (!errors || errors->kind == JsonKind::null_value) return result;
+  if (errors->kind != JsonKind::array) {
+    throw SdkError("invalid RPC result: expected array 'errors'");
+  }
+  for (const auto& value : errors->array) {
+    if (value.kind != JsonKind::object) {
+      throw SdkError("invalid RPC result: expected change decision error object");
+    }
+    result.errors.push_back(ChangeDecisionError{
+        required_member(value, "changeId", JsonKind::string).scalar,
+        required_member(value, "error", JsonKind::string).scalar});
+  }
+  return result;
+}
+
 std::vector<std::string> split_exec_args(const std::string& executable, const std::vector<std::string>& args) {
   std::vector<std::string> all;
   all.push_back(executable);
@@ -1606,6 +1628,40 @@ DirectoryAccessAcknowledgedResult AutohandSdk::acknowledge_directory_access(
   return parse_directory_access_acknowledged_result(request(
       "autohand.directoryAccessAcknowledged",
       "{\"requestId\":\"" + json_escape(request_id) + "\"}"));
+}
+
+std::string ChangesDecisionParams::to_json() const {
+  if (batch_id.empty() || is_blank(batch_id)) {
+    throw SdkError("changes decision batch_id must not be blank");
+  }
+  std::ostringstream output;
+  output << "{\"batchId\":\"" << json_escape(batch_id) << "\",\"action\":\"";
+  if (std::holds_alternative<AcceptAllChanges>(decision)) {
+    output << "accept_all\"}";
+  } else if (std::holds_alternative<RejectAllChanges>(decision)) {
+    output << "reject_all\"}";
+  } else {
+    const auto& selected = std::get<AcceptSelectedChanges>(decision).selected_change_ids;
+    if (selected.empty()) {
+      throw SdkError("accept_selected requires at least one selected change ID");
+    }
+    output << "accept_selected\",\"selectedChangeIds\":[";
+    for (std::size_t index = 0; index < selected.size(); ++index) {
+      if (selected[index].empty() || is_blank(selected[index])) {
+        throw SdkError("selected change IDs must not be blank");
+      }
+      if (index > 0) output << ',';
+      output << '"' << json_escape(selected[index]) << '"';
+    }
+    output << "]}";
+  }
+  return output.str();
+}
+
+ChangesDecisionResult AutohandSdk::decide_changes(
+    const ChangesDecisionParams& params) {
+  return parse_changes_decision_result(
+      request("autohand.changesDecision", params.to_json()));
 }
 
 Run::Run(AutohandSdk& sdk, std::string prompt, PromptOptions options)
