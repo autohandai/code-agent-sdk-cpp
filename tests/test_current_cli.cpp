@@ -355,6 +355,24 @@ void test_skill_generation(const std::string& executable) {
   fixture.assert_request("autohand.learn.generate", {R"("scope":"project")"});
 }
 
+void test_tools_registry(const std::string& executable) {
+  Fixture fixture(
+      executable,
+      "tools-registry",
+      R"json({"tools":[{"name":"release","description":"Prepare release","requiresApproval":true,"approvalMessage":"Publish?","source":"extension","scope":"project","disabled":false,"createdAt":"2026-07-21T00:00:00Z","schemaVersion":2,"handlerPreview":"run()","reuseHint":"Use for releases","extensionId":"release-tools","extensionVersion":"1.2.3"}],"diagnostics":[{"file":"bad-tool.json","reason":"invalid schema"}]})json");
+  const auto result = fixture.sdk.get_tools_registry();
+  assert(result.tools.size() == 1);
+  const auto& tool = result.tools.front();
+  assert(tool.name == "release");
+  assert(tool.source == autohand::ToolRegistrySource::Extension);
+  assert(tool.scope == autohand::ToolRegistryScope::Project);
+  assert(tool.requires_approval == true);
+  assert(tool.schema_version == 2);
+  assert(tool.extension_version == "1.2.3");
+  assert(result.diagnostics.front().file == "bad-tool.json");
+  fixture.assert_request("autohand.getToolsRegistry", {});
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -374,5 +392,6 @@ int main(int argc, char** argv) {
   test_project_learning_recommendations(executable);
   test_project_learning_updates(executable);
   test_skill_generation(executable);
+  test_tools_registry(executable);
   return 0;
 }

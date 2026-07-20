@@ -578,6 +578,35 @@ struct LearnGenerateResult {
   std::optional<std::string> error;
 };
 
+enum class ToolRegistrySource { Builtin, Meta, Extension };
+enum class ToolRegistryScope { User, Project };
+
+struct ToolRegistryEntry {
+  std::string name;
+  std::string description;
+  std::optional<bool> requires_approval;
+  std::optional<std::string> approval_message;
+  ToolRegistrySource source = ToolRegistrySource::Builtin;
+  std::optional<ToolRegistryScope> scope;
+  std::optional<bool> disabled;
+  std::optional<std::string> created_at;
+  std::optional<long long> schema_version;
+  std::optional<std::string> handler_preview;
+  std::optional<std::string> reuse_hint;
+  std::optional<std::string> extension_id;
+  std::optional<std::string> extension_version;
+};
+
+struct ToolRegistryDiagnostic {
+  std::string file;
+  std::string reason;
+};
+
+struct ToolsRegistryResult {
+  std::vector<ToolRegistryEntry> tools;
+  std::vector<ToolRegistryDiagnostic> diagnostics;
+};
+
 struct SdkEvent {
   std::string type;
   std::string raw_json;
@@ -687,6 +716,7 @@ class AutohandSdk {
       const LearnRecommendParams& params = {});
   LearnUpdateResult update_project_skills();
   LearnGenerateResult generate_skill(const LearnGenerateParams& params);
+  ToolsRegistryResult get_tools_registry();
 
  private:
   class Impl;

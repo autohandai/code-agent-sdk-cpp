@@ -958,6 +958,56 @@ LearnGenerateResult parse_learn_generate_result(const std::string& json) {
   return result;
 }
 
+ToolRegistrySource parse_tool_registry_source(const std::string& value) {
+  if (value == "builtin") return ToolRegistrySource::Builtin;
+  if (value == "meta") return ToolRegistrySource::Meta;
+  if (value == "extension") return ToolRegistrySource::Extension;
+  throw SdkError("invalid RPC result: unknown tool registry source '" + value + "'");
+}
+
+std::optional<ToolRegistryScope> parse_tool_registry_scope(const JsonValue& value) {
+  const auto scope = optional_string_member(value, "scope");
+  if (!scope) return std::nullopt;
+  if (*scope == "user") return ToolRegistryScope::User;
+  if (*scope == "project") return ToolRegistryScope::Project;
+  throw SdkError("invalid RPC result: unknown tool registry scope '" + *scope + "'");
+}
+
+ToolsRegistryResult parse_tools_registry_result(const std::string& json) {
+  const auto root = parse_json_document(json);
+  ToolsRegistryResult result;
+  for (const auto& value : required_member(root, "tools", JsonKind::array).array) {
+    if (value.kind != JsonKind::object) {
+      throw SdkError("invalid RPC result: expected tool registry object");
+    }
+    ToolRegistryEntry entry;
+    entry.name = required_member(value, "name", JsonKind::string).scalar;
+    entry.description = required_member(value, "description", JsonKind::string).scalar;
+    entry.requires_approval = optional_bool_member(value, "requiresApproval");
+    entry.approval_message = optional_string_member(value, "approvalMessage");
+    entry.source = parse_tool_registry_source(
+        required_member(value, "source", JsonKind::string).scalar);
+    entry.scope = parse_tool_registry_scope(value);
+    entry.disabled = optional_bool_member(value, "disabled");
+    entry.created_at = optional_string_member(value, "createdAt");
+    entry.schema_version = optional_integer_member(value, "schemaVersion");
+    entry.handler_preview = optional_string_member(value, "handlerPreview");
+    entry.reuse_hint = optional_string_member(value, "reuseHint");
+    entry.extension_id = optional_string_member(value, "extensionId");
+    entry.extension_version = optional_string_member(value, "extensionVersion");
+    result.tools.push_back(std::move(entry));
+  }
+  for (const auto& value : required_member(root, "diagnostics", JsonKind::array).array) {
+    if (value.kind != JsonKind::object) {
+      throw SdkError("invalid RPC result: expected tool registry diagnostic object");
+    }
+    result.diagnostics.push_back(ToolRegistryDiagnostic{
+        required_member(value, "file", JsonKind::string).scalar,
+        required_member(value, "reason", JsonKind::string).scalar});
+  }
+  return result;
+}
+
 std::vector<std::string> split_exec_args(const std::string& executable, const std::vector<std::string>& args) {
   std::vector<std::string> all;
   all.push_back(executable);
@@ -2011,6 +2061,10 @@ std::string LearnGenerateParams::to_json() const {
 LearnGenerateResult AutohandSdk::generate_skill(const LearnGenerateParams& params) {
   return parse_learn_generate_result(
       request("autohand.learn.generate", params.to_json()));
+}
+
+ToolsRegistryResult AutohandSdk::get_tools_registry() {
+  return parse_tools_registry_result(request("autohand.getToolsRegistry"));
 }
 
 Run::Run(AutohandSdk& sdk, std::string prompt, PromptOptions options)
