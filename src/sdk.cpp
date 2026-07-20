@@ -948,6 +948,16 @@ LearnUpdateResult parse_learn_update_result(const std::string& json) {
   return result;
 }
 
+LearnGenerateResult parse_learn_generate_result(const std::string& json) {
+  const auto root = parse_json_document(json);
+  LearnGenerateResult result;
+  result.success = required_member(root, "success", JsonKind::boolean).boolean;
+  result.skill_name = optional_string_member(root, "skillName");
+  result.skill_path = optional_string_member(root, "skillPath");
+  result.error = optional_string_member(root, "error");
+  return result;
+}
+
 std::vector<std::string> split_exec_args(const std::string& executable, const std::vector<std::string>& args) {
   std::vector<std::string> all;
   all.push_back(executable);
@@ -1991,6 +2001,16 @@ LearnRecommendResult AutohandSdk::recommend_project_skills(
 
 LearnUpdateResult AutohandSdk::update_project_skills() {
   return parse_learn_update_result(request("autohand.learn.update"));
+}
+
+std::string LearnGenerateParams::to_json() const {
+  const auto value = scope == SkillGenerationScope::Project ? "project" : "user";
+  return std::string("{\"scope\":\"") + value + "\"}";
+}
+
+LearnGenerateResult AutohandSdk::generate_skill(const LearnGenerateParams& params) {
+  return parse_learn_generate_result(
+      request("autohand.learn.generate", params.to_json()));
 }
 
 Run::Run(AutohandSdk& sdk, std::string prompt, PromptOptions options)

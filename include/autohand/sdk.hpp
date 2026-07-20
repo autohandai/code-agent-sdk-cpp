@@ -564,6 +564,20 @@ struct LearnUpdateResult {
   std::optional<std::string> error;
 };
 
+enum class SkillGenerationScope { Project, User };
+
+struct LearnGenerateParams {
+  SkillGenerationScope scope = SkillGenerationScope::Project;
+  std::string to_json() const;
+};
+
+struct LearnGenerateResult {
+  bool success = false;
+  std::optional<std::string> skill_name;
+  std::optional<std::string> skill_path;
+  std::optional<std::string> error;
+};
+
 struct SdkEvent {
   std::string type;
   std::string raw_json;
@@ -672,6 +686,7 @@ class AutohandSdk {
   LearnRecommendResult recommend_project_skills(
       const LearnRecommendParams& params = {});
   LearnUpdateResult update_project_skills();
+  LearnGenerateResult generate_skill(const LearnGenerateParams& params);
 
  private:
   class Impl;

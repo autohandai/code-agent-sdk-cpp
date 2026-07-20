@@ -342,6 +342,19 @@ void test_project_learning_updates(const std::string& executable) {
   fixture.assert_request("autohand.learn.update", {});
 }
 
+void test_skill_generation(const std::string& executable) {
+  Fixture fixture(
+      executable,
+      "learn-generate",
+      R"({"success":true,"skillName":"cpp-testing","skillPath":"/workspace/.autohand/skills/cpp-testing/SKILL.md"})");
+  const auto result = fixture.sdk.generate_skill(
+      {autohand::SkillGenerationScope::Project});
+  assert(result.success);
+  assert(result.skill_name == "cpp-testing");
+  assert(result.skill_path == "/workspace/.autohand/skills/cpp-testing/SKILL.md");
+  fixture.assert_request("autohand.learn.generate", {R"("scope":"project")"});
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -360,5 +373,6 @@ int main(int argc, char** argv) {
   test_mcp_invocation_responses(executable);
   test_project_learning_recommendations(executable);
   test_project_learning_updates(executable);
+  test_skill_generation(executable);
   return 0;
 }
