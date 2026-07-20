@@ -313,6 +313,21 @@ void test_mcp_invocation_responses(const std::string& executable) {
   assert(rejected);
 }
 
+void test_project_learning_recommendations(const std::string& executable) {
+  Fixture fixture(
+      executable,
+      "learn-recommend",
+      R"({"success":true,"projectSummary":"C++ SDK","audit":[{"skill":"legacy","status":"outdated","reason":"Old API"}],"recommendations":[{"slug":"cpp-testing","score":0.95,"reason":"Test coverage"}],"gapAnalysis":null})");
+  const auto result = fixture.sdk.recommend_project_skills({true});
+  assert(result.success);
+  assert(result.project_summary == "C++ SDK");
+  assert(result.audit.front().status == autohand::SkillAuditStatus::Outdated);
+  assert(result.recommendations.front().slug == "cpp-testing");
+  assert(result.recommendations.front().score == 0.95);
+  assert(!result.gap_analysis);
+  fixture.assert_request("autohand.learn.recommend", {R"("deep":true)"});
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -329,5 +344,6 @@ int main(int argc, char** argv) {
   test_timed_yolo_mode(executable);
   test_vscode_mcp_tool_registration(executable);
   test_mcp_invocation_responses(executable);
+  test_project_learning_recommendations(executable);
   return 0;
 }

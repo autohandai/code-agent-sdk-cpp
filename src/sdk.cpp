@@ -481,6 +481,15 @@ std::optional<double> optional_double_member(const JsonValue& object, const std:
   }
 }
 
+double required_double_member(const JsonValue& object, const std::string& key) {
+  const auto& member = required_member(object, key, JsonKind::number);
+  try {
+    return std::stod(member.scalar);
+  } catch (const std::exception&) {
+    throw SdkError("invalid RPC result: invalid number '" + key + "'");
+  }
+}
+
 std::vector<std::string> string_array_member(const JsonValue& object, const std::string& key) {
   const auto* member = object.member(key);
   if (!member) return {};
@@ -877,6 +886,41 @@ McpInvocationResponseResult parse_mcp_invocation_response_result(
   const auto root = parse_json_document(json);
   return McpInvocationResponseResult{
       required_member(root, "success", JsonKind::boolean).boolean};
+}
+
+SkillAuditStatus parse_skill_audit_status(const std::string& value) {
+  if (value == "redundant") return SkillAuditStatus::Redundant;
+  if (value == "outdated") return SkillAuditStatus::Outdated;
+  if (value == "conflicting") return SkillAuditStatus::Conflicting;
+  throw SdkError("invalid RPC result: unknown skill audit status '" + value + "'");
+}
+
+LearnRecommendResult parse_learn_recommend_result(const std::string& json) {
+  const auto root = parse_json_document(json);
+  LearnRecommendResult result;
+  result.success = required_member(root, "success", JsonKind::boolean).boolean;
+  result.project_summary = required_member(root, "projectSummary", JsonKind::string).scalar;
+  for (const auto& value : required_member(root, "audit", JsonKind::array).array) {
+    if (value.kind != JsonKind::object) {
+      throw SdkError("invalid RPC result: expected skill audit object");
+    }
+    result.audit.push_back(SkillAuditEntry{
+        required_member(value, "skill", JsonKind::string).scalar,
+        parse_skill_audit_status(required_member(value, "status", JsonKind::string).scalar),
+        required_member(value, "reason", JsonKind::string).scalar});
+  }
+  for (const auto& value : required_member(root, "recommendations", JsonKind::array).array) {
+    if (value.kind != JsonKind::object) {
+      throw SdkError("invalid RPC result: expected skill recommendation object");
+    }
+    result.recommendations.push_back(SkillRecommendation{
+        required_member(value, "slug", JsonKind::string).scalar,
+        required_double_member(value, "score"),
+        required_member(value, "reason", JsonKind::string).scalar});
+  }
+  result.gap_analysis = optional_string_member(root, "gapAnalysis");
+  result.error = optional_string_member(root, "error");
+  return result;
 }
 
 std::vector<std::string> split_exec_args(const std::string& executable, const std::vector<std::string>& args) {
@@ -1907,6 +1951,17 @@ McpInvocationResponseResult AutohandSdk::respond_to_mcp_invocation(
     const McpInvocationResponseParams& params) {
   return parse_mcp_invocation_response_result(
       request("autohand.mcp.invokeResponse", params.to_json()));
+}
+
+std::string LearnRecommendParams::to_json() const {
+  if (!deep) return "{}";
+  return std::string("{\"deep\":") + (*deep ? "true}" : "false}");
+}
+
+LearnRecommendResult AutohandSdk::recommend_project_skills(
+    const LearnRecommendParams& params) {
+  return parse_learn_recommend_result(
+      request("autohand.learn.recommend", params.to_json()));
 }
 
 Run::Run(AutohandSdk& sdk, std::string prompt, PromptOptions options)

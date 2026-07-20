@@ -521,6 +521,34 @@ struct McpInvocationResponseResult {
   bool success = false;
 };
 
+struct LearnRecommendParams {
+  std::optional<bool> deep;
+  std::string to_json() const;
+};
+
+enum class SkillAuditStatus { Redundant, Outdated, Conflicting };
+
+struct SkillAuditEntry {
+  std::string skill;
+  SkillAuditStatus status = SkillAuditStatus::Redundant;
+  std::string reason;
+};
+
+struct SkillRecommendation {
+  std::string slug;
+  double score = 0;
+  std::string reason;
+};
+
+struct LearnRecommendResult {
+  bool success = false;
+  std::string project_summary;
+  std::vector<SkillAuditEntry> audit;
+  std::vector<SkillRecommendation> recommendations;
+  std::optional<std::string> gap_analysis;
+  std::optional<std::string> error;
+};
+
 struct SdkEvent {
   std::string type;
   std::string raw_json;
@@ -626,6 +654,8 @@ class AutohandSdk {
       const SetVscodeMcpToolsParams& params);
   McpInvocationResponseResult respond_to_mcp_invocation(
       const McpInvocationResponseParams& params);
+  LearnRecommendResult recommend_project_skills(
+      const LearnRecommendParams& params = {});
 
  private:
   class Impl;
