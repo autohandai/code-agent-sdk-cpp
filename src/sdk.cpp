@@ -1057,6 +1057,18 @@ PreToolHookEvent parse_pre_tool_hook_event(const std::string& json) {
       required_member(root, "timestamp", JsonKind::string).scalar};
 }
 
+PostToolHookEvent parse_post_tool_hook_event(const std::string& json) {
+  const auto root = parse_json_document(json);
+  PostToolHookEvent event;
+  event.tool_id = required_member(root, "toolId", JsonKind::string).scalar;
+  event.tool_name = required_member(root, "toolName", JsonKind::string).scalar;
+  event.success = required_member(root, "success", JsonKind::boolean).boolean;
+  event.duration = required_double_member(root, "duration");
+  event.output = optional_string_member(root, "output");
+  event.timestamp = required_member(root, "timestamp", JsonKind::string).scalar;
+  return event;
+}
+
 std::vector<std::string> split_exec_args(const std::string& executable, const std::vector<std::string>& args) {
   std::vector<std::string> all;
   all.push_back(executable);
@@ -2396,6 +2408,7 @@ std::string event_type_from_method(const std::string& method, const std::string&
   if (method == "autohand.automode.complete") return "automode_complete";
   if (method == "autohand.automode.error") return "automode_error";
   if (method == "autohand.hook.preTool") return "hook_pre_tool";
+  if (method == "autohand.hook.postTool") return "hook_post_tool";
   if (method.rfind("autohand.autoresearch.", 0) == 0) return "autoresearch";
   if (method == "autohand.error") return "error";
   constexpr std::string_view prefix = "autohand.";
@@ -2433,6 +2446,11 @@ SdkEvent sdk_event_from_notification(const std::string& method, const std::strin
     return SdkEvent{
         "hook_pre_tool", normalized_params,
         parse_pre_tool_hook_event(normalized_params)};
+  }
+  if (method == "autohand.hook.postTool") {
+    return SdkEvent{
+        "hook_post_tool", normalized_params,
+        parse_post_tool_hook_event(normalized_params)};
   }
   return SdkEvent{
       event_type_from_method(method, normalized_params), normalized_params, std::monostate{}};

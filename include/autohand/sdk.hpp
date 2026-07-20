@@ -640,13 +640,23 @@ struct PreToolHookEvent {
   std::string timestamp;
 };
 
+struct PostToolHookEvent {
+  std::string tool_id;
+  std::string tool_name;
+  bool success = false;
+  double duration = 0;
+  std::optional<std::string> output;
+  std::string timestamp;
+};
+
 using SdkEventPayload =
     std::variant<
         std::monostate,
         AutomodeIterationEvent,
         AutomodeCompleteEvent,
         AutomodeErrorEvent,
-        PreToolHookEvent>;
+        PreToolHookEvent,
+        PostToolHookEvent>;
 
 struct SdkEvent {
   std::string type;

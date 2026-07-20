@@ -477,6 +477,24 @@ void test_pre_tool_hook_events(const std::string& executable) {
   assert(hook->args_json == R"({"path":"README.md"})");
 }
 
+void test_post_tool_hook_events(const std::string& executable) {
+  Fixture fixture(
+      executable,
+      "hook-post-tool",
+      "{}",
+      R"({"jsonrpc":"2.0","method":"autohand.hook.postTool","params":{"toolId":"tool-1","toolName":"read_file","success":true,"duration":12.5,"output":"contents","timestamp":"2026-07-21T00:04:00Z"}})");
+  std::vector<autohand::SdkEvent> events;
+  fixture.sdk.stream_prompt("continue", [&](const auto& event) { events.push_back(event); });
+  assert(events.size() == 1);
+  assert(events.front().type == "hook_post_tool");
+  const auto* hook = std::get_if<autohand::PostToolHookEvent>(&events.front().payload);
+  assert(hook != nullptr);
+  assert(hook->tool_id == "tool-1");
+  assert(hook->success);
+  assert(hook->duration == 12.5);
+  assert(hook->output == "contents");
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -502,5 +520,6 @@ int main(int argc, char** argv) {
   test_automode_completion_events(executable);
   test_automode_error_events(executable);
   test_pre_tool_hook_events(executable);
+  test_post_tool_hook_events(executable);
   return 0;
 }
