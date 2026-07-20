@@ -350,6 +350,10 @@ struct McpGetServerConfigsResult {
   std::vector<McpServerConfigInfo> configs;
 };
 
+struct PermissionAcknowledgedResult {
+  bool success = false;
+};
+
 struct SdkEvent {
   std::string type;
   std::string raw_json;
@@ -440,6 +444,7 @@ class AutohandSdk {
   std::string pin_autoresearch(const std::string& attempt_id, bool pinned);
   std::string prune_autoresearch(bool dry_run = true, bool yes = false);
   std::string permission_response(const std::string& request_id, const std::string& decision);
+  PermissionAcknowledgedResult acknowledge_permission(const std::string& request_id);
 
  private:
   class Impl;

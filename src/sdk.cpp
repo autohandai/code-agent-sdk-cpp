@@ -87,6 +87,12 @@ void append_json_strings(
   out << ']';
 }
 
+bool is_blank(std::string_view value) {
+  return std::all_of(value.begin(), value.end(), [](unsigned char character) {
+    return std::isspace(character) != 0;
+  });
+}
+
 void append_joined(
     std::vector<std::string>& args,
     const std::string& flag,
@@ -715,6 +721,12 @@ McpGetServerConfigsResult parse_mcp_configs_result(const std::string& json) {
     result.configs.push_back(std::move(config));
   }
   return result;
+}
+
+PermissionAcknowledgedResult parse_permission_acknowledged_result(const std::string& json) {
+  const auto root = parse_json_document(json);
+  return PermissionAcknowledgedResult{
+      required_member(root, "success", JsonKind::boolean).boolean};
 }
 
 std::vector<std::string> split_exec_args(const std::string& executable, const std::vector<std::string>& args) {
@@ -1546,6 +1558,16 @@ std::string AutohandSdk::permission_response(const std::string& request_id, cons
   return request("autohand.permissionResponse",
                  "{\"requestId\":\"" + json_escape(request_id) + "\",\"decision\":\"" +
                      json_escape(decision) + "\"}");
+}
+
+PermissionAcknowledgedResult AutohandSdk::acknowledge_permission(
+    const std::string& request_id) {
+  if (request_id.empty() || is_blank(request_id)) {
+    throw SdkError("permission request_id must not be blank");
+  }
+  return parse_permission_acknowledged_result(request(
+      "autohand.permissionAcknowledged",
+      "{\"requestId\":\"" + json_escape(request_id) + "\"}"));
 }
 
 Run::Run(AutohandSdk& sdk, std::string prompt, PromptOptions options)
