@@ -67,6 +67,9 @@ while IFS= read -r line; do
     *autohand.automode.pause*)
       printf '{"jsonrpc":"2.0","id":%s,"result":{"success":true}}\n' "$id"
       ;;
+    *autohand.automode.resume*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"success":true}}\n' "$id"
+      ;;
     *autohand.getSkillsRegistry*)
       printf '{"jsonrpc":"2.0","id":%s,"result":{"success":true,"skills":[{"id":"skill-1","name":"review","description":"Review code","category":"quality","tags":["cpp"],"rating":4.5,"downloadCount":8,"isFeatured":true}],"categories":[{"name":"quality","count":1}]}}\n' "$id"
       ;;
@@ -413,6 +416,8 @@ int main(int argc, char** argv) {
   assert(automode_status.state->last_checkpoint->commit == "checkpoint-1");
   const auto paused = sdk.pause_automode();
   assert(paused.success && !paused.error);
+  const auto resumed = sdk.resume_automode();
+  assert(resumed.success && !resumed.error);
   assert(autohand::json_get_string(sdk.create_goal(goal), "method") == "autohand.goal.create");
   assert(autohand::json_get_string(sdk.get_goal(), "method") == "autohand.goal.get");
   autohand::GoalParams update;

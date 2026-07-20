@@ -375,6 +375,7 @@ class AutohandSdk {
   AutomodeStartResult start_automode(const AutomodeStartParams& params);
   AutomodeStatusResult get_automode_status();
   AutomodeOperationResult pause_automode();
+  AutomodeOperationResult resume_automode();
   GetSkillsRegistryResult get_skills_registry(const GetSkillsRegistryParams& params = {});
   InstallSkillResult install_skill(const InstallSkillParams& params);
   McpListServersResult list_mcp_servers();
@@ -463,6 +464,7 @@ class Agent {
   AutomodeStartResult start_automode(const AutomodeStartParams& params);
   AutomodeStatusResult get_automode_status();
   AutomodeOperationResult pause_automode();
+  AutomodeOperationResult resume_automode();
   GetSkillsRegistryResult get_skills_registry(const GetSkillsRegistryParams& params = {});
   InstallSkillResult install_skill(const InstallSkillParams& params);
   McpListServersResult list_mcp_servers();

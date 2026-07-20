@@ -1399,6 +1399,9 @@ AutomodeStatusResult AutohandSdk::get_automode_status() {
 AutomodeOperationResult AutohandSdk::pause_automode() {
   return parse_automode_operation_result(request("autohand.automode.pause"));
 }
+AutomodeOperationResult AutohandSdk::resume_automode() {
+  return parse_automode_operation_result(request("autohand.automode.resume"));
+}
 GetSkillsRegistryResult AutohandSdk::get_skills_registry(const GetSkillsRegistryParams& params) {
   return parse_skills_registry_result(request("autohand.getSkillsRegistry", params.to_json()));
 }
@@ -1588,6 +1591,7 @@ AutomodeStatusResult Agent::get_automode_status() {
   return sdk_.get_automode_status();
 }
 AutomodeOperationResult Agent::pause_automode() { return sdk_.pause_automode(); }
+AutomodeOperationResult Agent::resume_automode() { return sdk_.resume_automode(); }
 GetSkillsRegistryResult Agent::get_skills_registry(const GetSkillsRegistryParams& params) {
   return sdk_.get_skills_registry(params);
 }
