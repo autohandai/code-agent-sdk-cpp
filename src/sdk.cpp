@@ -453,6 +453,15 @@ std::optional<long long> optional_integer_member(const JsonValue& object, const 
   }
 }
 
+long long required_integer_member(const JsonValue& object, const std::string& key) {
+  const auto& member = required_member(object, key, JsonKind::number);
+  try {
+    return std::stoll(member.scalar);
+  } catch (const std::exception&) {
+    throw SdkError("invalid RPC result: invalid integer '" + key + "'");
+  }
+}
+
 std::optional<double> optional_double_member(const JsonValue& object, const std::string& key) {
   const auto* member = object.member(key);
   if (!member || member->kind == JsonKind::null_value) return std::nullopt;
@@ -531,6 +540,48 @@ AutomodeStartResult parse_automode_start_result(const std::string& json) {
   result.success = required_member(root, "success", JsonKind::boolean).boolean;
   result.session_id = optional_string_member(root, "sessionId");
   result.error = optional_string_member(root, "error");
+  return result;
+}
+
+AutomodeSessionStatus parse_automode_session_status(const std::string& value) {
+  if (value == "running") return AutomodeSessionStatus::Running;
+  if (value == "paused") return AutomodeSessionStatus::Paused;
+  if (value == "completed") return AutomodeSessionStatus::Completed;
+  if (value == "cancelled") return AutomodeSessionStatus::Cancelled;
+  if (value == "failed") return AutomodeSessionStatus::Failed;
+  throw SdkError("invalid RPC result: unknown auto-mode status '" + value + "'");
+}
+
+AutomodeStatusResult parse_automode_status_result(const std::string& json) {
+  const auto root = parse_json_document(json);
+  AutomodeStatusResult result;
+  result.active = required_member(root, "active", JsonKind::boolean).boolean;
+  result.paused = required_member(root, "paused", JsonKind::boolean).boolean;
+  const auto* state_value = root.member("state");
+  if (!state_value || state_value->kind == JsonKind::null_value) return result;
+  if (state_value->kind != JsonKind::object) {
+    throw SdkError("invalid RPC result: expected object 'state'");
+  }
+  AutomodeState state;
+  state.session_id = required_member(*state_value, "sessionId", JsonKind::string).scalar;
+  state.status = parse_automode_session_status(
+      required_member(*state_value, "status", JsonKind::string).scalar);
+  state.current_iteration = required_integer_member(*state_value, "currentIteration");
+  state.max_iterations = required_integer_member(*state_value, "maxIterations");
+  state.files_created = required_integer_member(*state_value, "filesCreated");
+  state.files_modified = required_integer_member(*state_value, "filesModified");
+  state.branch = optional_string_member(*state_value, "branch");
+  const auto* checkpoint = state_value->member("lastCheckpoint");
+  if (checkpoint && checkpoint->kind != JsonKind::null_value) {
+    if (checkpoint->kind != JsonKind::object) {
+      throw SdkError("invalid RPC result: expected object 'lastCheckpoint'");
+    }
+    state.last_checkpoint = AutomodeCheckpoint{
+        required_member(*checkpoint, "commit", JsonKind::string).scalar,
+        required_member(*checkpoint, "message", JsonKind::string).scalar,
+        required_member(*checkpoint, "timestamp", JsonKind::string).scalar};
+  }
+  result.state = std::move(state);
   return result;
 }
 
@@ -1334,6 +1385,9 @@ AutomodeStartResult AutohandSdk::start_automode(const AutomodeStartParams& param
   return parse_automode_start_result(
       request("autohand.automode.start", params.to_json()));
 }
+AutomodeStatusResult AutohandSdk::get_automode_status() {
+  return parse_automode_status_result(request("autohand.automode.status"));
+}
 GetSkillsRegistryResult AutohandSdk::get_skills_registry(const GetSkillsRegistryParams& params) {
   return parse_skills_registry_result(request("autohand.getSkillsRegistry", params.to_json()));
 }
@@ -1518,6 +1572,9 @@ BrowserHandoffAttachResult Agent::attach_latest_browser_handoff() {
 }
 AutomodeStartResult Agent::start_automode(const AutomodeStartParams& params) {
   return sdk_.start_automode(params);
+}
+AutomodeStatusResult Agent::get_automode_status() {
+  return sdk_.get_automode_status();
 }
 GetSkillsRegistryResult Agent::get_skills_registry(const GetSkillsRegistryParams& params) {
   return sdk_.get_skills_registry(params);

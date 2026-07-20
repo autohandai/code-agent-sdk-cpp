@@ -203,6 +203,31 @@ struct AutomodeStartResult {
   std::optional<std::string> error;
 };
 
+enum class AutomodeSessionStatus { Running, Paused, Completed, Cancelled, Failed };
+
+struct AutomodeCheckpoint {
+  std::string commit;
+  std::string message;
+  std::string timestamp;
+};
+
+struct AutomodeState {
+  std::string session_id;
+  AutomodeSessionStatus status = AutomodeSessionStatus::Running;
+  long long current_iteration = 0;
+  long long max_iterations = 0;
+  long long files_created = 0;
+  long long files_modified = 0;
+  std::optional<std::string> branch;
+  std::optional<AutomodeCheckpoint> last_checkpoint;
+};
+
+struct AutomodeStatusResult {
+  bool active = false;
+  bool paused = false;
+  std::optional<AutomodeState> state;
+};
+
 struct CommunitySkill {
   std::string id;
   std::string name;
@@ -343,6 +368,7 @@ class AutohandSdk {
       const BrowserHandoffAttachParams& params);
   BrowserHandoffAttachResult attach_latest_browser_handoff();
   AutomodeStartResult start_automode(const AutomodeStartParams& params);
+  AutomodeStatusResult get_automode_status();
   GetSkillsRegistryResult get_skills_registry(const GetSkillsRegistryParams& params = {});
   InstallSkillResult install_skill(const InstallSkillParams& params);
   McpListServersResult list_mcp_servers();
@@ -429,6 +455,7 @@ class Agent {
       const BrowserHandoffAttachParams& params);
   BrowserHandoffAttachResult attach_latest_browser_handoff();
   AutomodeStartResult start_automode(const AutomodeStartParams& params);
+  AutomodeStatusResult get_automode_status();
   GetSkillsRegistryResult get_skills_registry(const GetSkillsRegistryParams& params = {});
   InstallSkillResult install_skill(const InstallSkillParams& params);
   McpListServersResult list_mcp_servers();

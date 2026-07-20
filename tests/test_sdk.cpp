@@ -61,6 +61,9 @@ while IFS= read -r line; do
     *autohand.automode.start*)
       printf '{"jsonrpc":"2.0","id":%s,"result":{"success":true,"sessionId":"automode-session"}}\n' "$id"
       ;;
+    *autohand.automode.status*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"active":true,"paused":false,"state":{"sessionId":"automode-session","status":"running","currentIteration":4,"maxIterations":8,"filesCreated":2,"filesModified":7,"branch":"automode/session","lastCheckpoint":{"commit":"checkpoint-1","message":"iteration 3","timestamp":"2026-07-20T00:03:00.000Z"}}}}\n' "$id"
+      ;;
     *autohand.getSkillsRegistry*)
       printf '{"jsonrpc":"2.0","id":%s,"result":{"success":true,"skills":[{"id":"skill-1","name":"review","description":"Review code","category":"quality","tags":["cpp"],"rating":4.5,"downloadCount":8,"isFeatured":true}],"categories":[{"name":"quality","count":1}]}}\n' "$id"
       ;;
@@ -398,6 +401,13 @@ int main(int argc, char** argv) {
   const auto automode_started = sdk.start_automode(automode_start);
   assert(automode_started.success);
   assert(automode_started.session_id == "automode-session");
+  const auto automode_status = sdk.get_automode_status();
+  assert(automode_status.active && !automode_status.paused);
+  assert(automode_status.state);
+  assert(automode_status.state->status == autohand::AutomodeSessionStatus::Running);
+  assert(automode_status.state->current_iteration == 4);
+  assert(automode_status.state->last_checkpoint);
+  assert(automode_status.state->last_checkpoint->commit == "checkpoint-1");
   assert(autohand::json_get_string(sdk.create_goal(goal), "method") == "autohand.goal.create");
   assert(autohand::json_get_string(sdk.get_goal(), "method") == "autohand.goal.get");
   autohand::GoalParams update;
