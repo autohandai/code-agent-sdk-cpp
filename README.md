@@ -150,6 +150,7 @@ request and result structures are typed, including `SkillInstallScope` and
 - `get_automode_status()` reports runtime flags and typed persisted state.
 - `pause_automode()` pauses the active autonomous run.
 - `resume_automode()` resumes a paused autonomous run.
+- `cancel_automode()` cancels a run with an optional reason.
 
 ## Startup Performance
 

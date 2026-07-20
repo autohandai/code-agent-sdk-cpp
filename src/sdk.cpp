@@ -930,6 +930,11 @@ std::string AutomodeStartParams::to_json() const {
   return out.str();
 }
 
+std::string AutomodeCancelParams::to_json() const {
+  if (!reason) return "{}";
+  return "{\"reason\":\"" + json_escape(*reason) + "\"}";
+}
+
 std::string InstallSkillParams::to_json() const {
   if (skill_name.empty()) throw SdkError("skill_name must not be empty");
   std::ostringstream out;
@@ -1402,6 +1407,10 @@ AutomodeOperationResult AutohandSdk::pause_automode() {
 AutomodeOperationResult AutohandSdk::resume_automode() {
   return parse_automode_operation_result(request("autohand.automode.resume"));
 }
+AutomodeOperationResult AutohandSdk::cancel_automode(const AutomodeCancelParams& params) {
+  return parse_automode_operation_result(
+      request("autohand.automode.cancel", params.to_json()));
+}
 GetSkillsRegistryResult AutohandSdk::get_skills_registry(const GetSkillsRegistryParams& params) {
   return parse_skills_registry_result(request("autohand.getSkillsRegistry", params.to_json()));
 }
@@ -1592,6 +1601,9 @@ AutomodeStatusResult Agent::get_automode_status() {
 }
 AutomodeOperationResult Agent::pause_automode() { return sdk_.pause_automode(); }
 AutomodeOperationResult Agent::resume_automode() { return sdk_.resume_automode(); }
+AutomodeOperationResult Agent::cancel_automode(const AutomodeCancelParams& params) {
+  return sdk_.cancel_automode(params);
+}
 GetSkillsRegistryResult Agent::get_skills_registry(const GetSkillsRegistryParams& params) {
   return sdk_.get_skills_registry(params);
 }

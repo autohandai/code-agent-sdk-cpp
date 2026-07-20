@@ -233,6 +233,11 @@ struct AutomodeOperationResult {
   std::optional<std::string> error;
 };
 
+struct AutomodeCancelParams {
+  std::optional<std::string> reason;
+  std::string to_json() const;
+};
+
 struct CommunitySkill {
   std::string id;
   std::string name;
@@ -376,6 +381,7 @@ class AutohandSdk {
   AutomodeStatusResult get_automode_status();
   AutomodeOperationResult pause_automode();
   AutomodeOperationResult resume_automode();
+  AutomodeOperationResult cancel_automode(const AutomodeCancelParams& params = {});
   GetSkillsRegistryResult get_skills_registry(const GetSkillsRegistryParams& params = {});
   InstallSkillResult install_skill(const InstallSkillParams& params);
   McpListServersResult list_mcp_servers();
@@ -465,6 +471,7 @@ class Agent {
   AutomodeStatusResult get_automode_status();
   AutomodeOperationResult pause_automode();
   AutomodeOperationResult resume_automode();
+  AutomodeOperationResult cancel_automode(const AutomodeCancelParams& params = {});
   GetSkillsRegistryResult get_skills_registry(const GetSkillsRegistryParams& params = {});
   InstallSkillResult install_skill(const InstallSkillParams& params);
   McpListServersResult list_mcp_servers();
