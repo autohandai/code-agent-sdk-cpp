@@ -216,6 +216,28 @@ void test_session_details(const std::string& executable) {
   assert(rejected);
 }
 
+void test_session_attachment(const std::string& executable) {
+  Fixture fixture(
+      executable,
+      "session-attach",
+      R"({"success":true,"sessionId":"session-3","workspaceRoot":"/workspace","messageCount":12})");
+  const auto result = fixture.sdk.attach_session({"session-3"});
+  assert(result.success);
+  assert(result.session_id == "session-3");
+  assert(result.workspace_root == "/workspace");
+  assert(result.message_count == 12);
+  assert(!result.error);
+  fixture.assert_request("autohand.session.attach", {R"("sessionId":"session-3")"});
+
+  bool rejected = false;
+  try {
+    (void)fixture.sdk.attach_session({""});
+  } catch (const autohand::SdkError&) {
+    rejected = true;
+  }
+  assert(rejected);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -228,5 +250,6 @@ int main(int argc, char** argv) {
   test_multi_file_change_decisions(executable);
   test_session_history(executable);
   test_session_details(executable);
+  test_session_attachment(executable);
   return 0;
 }

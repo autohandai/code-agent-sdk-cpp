@@ -455,6 +455,19 @@ struct SessionLookupFailure {
 
 using SessionDetailsResult = std::variant<SessionDetails, SessionLookupFailure>;
 
+struct SessionAttachParams {
+  std::string session_id;
+  std::string to_json() const;
+};
+
+struct SessionAttachResult {
+  bool success = false;
+  std::optional<std::string> session_id;
+  std::optional<std::string> workspace_root;
+  std::optional<long long> message_count;
+  std::optional<std::string> error;
+};
+
 struct SdkEvent {
   std::string type;
   std::string raw_json;
@@ -553,6 +566,7 @@ class AutohandSdk {
   ChangesDecisionResult decide_changes(const ChangesDecisionParams& params);
   SessionHistoryResult get_session_history(const SessionHistoryParams& params = {});
   SessionDetailsResult get_session(const std::string& session_id);
+  SessionAttachResult attach_session(const SessionAttachParams& params);
 
  private:
   class Impl;

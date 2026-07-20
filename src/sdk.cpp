@@ -848,6 +848,17 @@ SessionDetailsResult parse_session_details_result(const std::string& json) {
   return details;
 }
 
+SessionAttachResult parse_session_attach_result(const std::string& json) {
+  const auto root = parse_json_document(json);
+  SessionAttachResult result;
+  result.success = required_member(root, "success", JsonKind::boolean).boolean;
+  result.session_id = optional_string_member(root, "sessionId");
+  result.workspace_root = optional_string_member(root, "workspaceRoot");
+  result.message_count = optional_integer_member(root, "messageCount");
+  result.error = optional_string_member(root, "error");
+  return result;
+}
+
 std::vector<std::string> split_exec_args(const std::string& executable, const std::vector<std::string>& args) {
   std::vector<std::string> all;
   all.push_back(executable);
@@ -1771,6 +1782,18 @@ SessionDetailsResult AutohandSdk::get_session(const std::string& session_id) {
   }
   return parse_session_details_result(request(
       "autohand.getSession", "{\"sessionId\":\"" + json_escape(session_id) + "\"}"));
+}
+
+std::string SessionAttachParams::to_json() const {
+  if (session_id.empty() || is_blank(session_id)) {
+    throw SdkError("session_id must not be blank");
+  }
+  return "{\"sessionId\":\"" + json_escape(session_id) + "\"}";
+}
+
+SessionAttachResult AutohandSdk::attach_session(const SessionAttachParams& params) {
+  return parse_session_attach_result(
+      request("autohand.session.attach", params.to_json()));
 }
 
 Run::Run(AutohandSdk& sdk, std::string prompt, PromptOptions options)
