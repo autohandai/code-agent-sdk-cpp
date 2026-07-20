@@ -228,6 +228,11 @@ struct AutomodeStatusResult {
   std::optional<AutomodeState> state;
 };
 
+struct AutomodeOperationResult {
+  bool success = false;
+  std::optional<std::string> error;
+};
+
 struct CommunitySkill {
   std::string id;
   std::string name;
@@ -369,6 +374,7 @@ class AutohandSdk {
   BrowserHandoffAttachResult attach_latest_browser_handoff();
   AutomodeStartResult start_automode(const AutomodeStartParams& params);
   AutomodeStatusResult get_automode_status();
+  AutomodeOperationResult pause_automode();
   GetSkillsRegistryResult get_skills_registry(const GetSkillsRegistryParams& params = {});
   InstallSkillResult install_skill(const InstallSkillParams& params);
   McpListServersResult list_mcp_servers();
@@ -456,6 +462,7 @@ class Agent {
   BrowserHandoffAttachResult attach_latest_browser_handoff();
   AutomodeStartResult start_automode(const AutomodeStartParams& params);
   AutomodeStatusResult get_automode_status();
+  AutomodeOperationResult pause_automode();
   GetSkillsRegistryResult get_skills_registry(const GetSkillsRegistryParams& params = {});
   InstallSkillResult install_skill(const InstallSkillParams& params);
   McpListServersResult list_mcp_servers();

@@ -585,6 +585,14 @@ AutomodeStatusResult parse_automode_status_result(const std::string& json) {
   return result;
 }
 
+AutomodeOperationResult parse_automode_operation_result(const std::string& json) {
+  const auto root = parse_json_document(json);
+  AutomodeOperationResult result;
+  result.success = required_member(root, "success", JsonKind::boolean).boolean;
+  result.error = optional_string_member(root, "error");
+  return result;
+}
+
 GetSkillsRegistryResult parse_skills_registry_result(const std::string& json) {
   const auto root = parse_json_document(json);
   GetSkillsRegistryResult result;
@@ -1388,6 +1396,9 @@ AutomodeStartResult AutohandSdk::start_automode(const AutomodeStartParams& param
 AutomodeStatusResult AutohandSdk::get_automode_status() {
   return parse_automode_status_result(request("autohand.automode.status"));
 }
+AutomodeOperationResult AutohandSdk::pause_automode() {
+  return parse_automode_operation_result(request("autohand.automode.pause"));
+}
 GetSkillsRegistryResult AutohandSdk::get_skills_registry(const GetSkillsRegistryParams& params) {
   return parse_skills_registry_result(request("autohand.getSkillsRegistry", params.to_json()));
 }
@@ -1576,6 +1587,7 @@ AutomodeStartResult Agent::start_automode(const AutomodeStartParams& params) {
 AutomodeStatusResult Agent::get_automode_status() {
   return sdk_.get_automode_status();
 }
+AutomodeOperationResult Agent::pause_automode() { return sdk_.pause_automode(); }
 GetSkillsRegistryResult Agent::get_skills_registry(const GetSkillsRegistryParams& params) {
   return sdk_.get_skills_registry(params);
 }

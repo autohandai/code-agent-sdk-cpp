@@ -148,6 +148,7 @@ request and result structures are typed, including `SkillInstallScope` and
 - `attach_latest_browser_handoff()` attaches the newest unexpired handoff.
 - `start_automode()` starts a typed autonomous run and returns on acceptance.
 - `get_automode_status()` reports runtime flags and typed persisted state.
+- `pause_automode()` pauses the active autonomous run.
 
 ## Startup Performance
 
