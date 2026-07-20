@@ -155,6 +155,10 @@ struct PromptOptions {
   std::string to_json(std::string_view message) const;
 };
 
+struct ResetResult {
+  std::string session_id;
+};
+
 struct CommunitySkill {
   std::string id;
   std::string name;
@@ -288,6 +292,7 @@ class AutohandSdk {
   std::string set_model(const std::string& model);
   std::string get_state();
   std::string get_messages();
+  ResetResult reset();
   GetSkillsRegistryResult get_skills_registry(const GetSkillsRegistryParams& params = {});
   InstallSkillResult install_skill(const InstallSkillParams& params);
   McpListServersResult list_mcp_servers();
@@ -367,6 +372,7 @@ class Agent {
   std::string queue_goal(const GoalParams& params);
   std::string start_queued_goal();
   std::string list_goal_templates();
+  ResetResult reset();
   GetSkillsRegistryResult get_skills_registry(const GetSkillsRegistryParams& params = {});
   InstallSkillResult install_skill(const InstallSkillParams& params);
   McpListServersResult list_mcp_servers();

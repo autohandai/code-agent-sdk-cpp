@@ -499,6 +499,11 @@ std::map<std::string, std::string> string_map_member(const JsonValue& object, co
   return values;
 }
 
+ResetResult parse_reset_result(const std::string& json) {
+  const auto root = parse_json_document(json);
+  return ResetResult{required_member(root, "sessionId", JsonKind::string).scalar};
+}
+
 GetSkillsRegistryResult parse_skills_registry_result(const std::string& json) {
   const auto root = parse_json_document(json);
   GetSkillsRegistryResult result;
@@ -1247,6 +1252,9 @@ std::string AutohandSdk::set_model(const std::string& model) {
 }
 std::string AutohandSdk::get_state() { return request("autohand.getState"); }
 std::string AutohandSdk::get_messages() { return request("autohand.getMessages"); }
+ResetResult AutohandSdk::reset() {
+  return parse_reset_result(request("autohand.reset"));
+}
 GetSkillsRegistryResult AutohandSdk::get_skills_registry(const GetSkillsRegistryParams& params) {
   return parse_skills_registry_result(request("autohand.getSkillsRegistry", params.to_json()));
 }
@@ -1417,6 +1425,7 @@ std::string Agent::clear_goal() { return sdk_.clear_goal(); }
 std::string Agent::queue_goal(const GoalParams& params) { return sdk_.queue_goal(params); }
 std::string Agent::start_queued_goal() { return sdk_.start_queued_goal(); }
 std::string Agent::list_goal_templates() { return sdk_.list_goal_templates(); }
+ResetResult Agent::reset() { return sdk_.reset(); }
 GetSkillsRegistryResult Agent::get_skills_registry(const GetSkillsRegistryParams& params) {
   return sdk_.get_skills_registry(params);
 }

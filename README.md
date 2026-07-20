@@ -140,6 +140,10 @@ constraints, replay, rescoring, comparison, pinning, and retention safety.
 request and result structures are typed, including `SkillInstallScope` and
 `McpTransport` enums that match the current CLI wire contract.
 
+## Session And Autonomous Control
+
+- `reset()` clears the conversation and returns the new session ID.
+
 ## Startup Performance
 
 The deterministic fake-CLI gate measures `publicImportMs`, `sdkStartReturnMs`,
