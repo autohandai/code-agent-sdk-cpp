@@ -420,6 +420,41 @@ struct SessionHistoryResult {
   long long total_items = 0;
 };
 
+enum class SessionMessageRole { User, Assistant, System, Tool };
+
+struct SessionToolCall {
+  std::string id;
+  std::string name;
+  std::string args_json;
+};
+
+struct SessionMessage {
+  std::string id;
+  SessionMessageRole role = SessionMessageRole::User;
+  std::string content;
+  std::string timestamp;
+  std::vector<SessionToolCall> tool_calls;
+};
+
+struct SessionDetails {
+  std::string session_id;
+  std::string project_name;
+  std::string model;
+  long long message_count = 0;
+  SessionStatus status = SessionStatus::Active;
+  std::string created_at;
+  std::string last_active_at;
+  std::optional<std::string> summary;
+  std::vector<SessionMessage> messages;
+  std::string workspace_root;
+};
+
+struct SessionLookupFailure {
+  std::optional<std::string> error;
+};
+
+using SessionDetailsResult = std::variant<SessionDetails, SessionLookupFailure>;
+
 struct SdkEvent {
   std::string type;
   std::string raw_json;
@@ -517,6 +552,7 @@ class AutohandSdk {
       const std::string& request_id);
   ChangesDecisionResult decide_changes(const ChangesDecisionParams& params);
   SessionHistoryResult get_session_history(const SessionHistoryParams& params = {});
+  SessionDetailsResult get_session(const std::string& session_id);
 
  private:
   class Impl;

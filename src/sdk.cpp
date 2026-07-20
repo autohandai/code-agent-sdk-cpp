@@ -794,6 +794,60 @@ SessionHistoryResult parse_session_history_result(const std::string& json) {
   return result;
 }
 
+SessionMessageRole parse_session_message_role(const std::string& value) {
+  if (value == "user") return SessionMessageRole::User;
+  if (value == "assistant") return SessionMessageRole::Assistant;
+  if (value == "system") return SessionMessageRole::System;
+  if (value == "tool") return SessionMessageRole::Tool;
+  throw SdkError("invalid RPC result: unknown session message role '" + value + "'");
+}
+
+SessionDetailsResult parse_session_details_result(const std::string& json) {
+  const auto root = parse_json_document(json);
+  const auto success = required_member(root, "success", JsonKind::boolean).boolean;
+  if (!success) return SessionLookupFailure{optional_string_member(root, "error")};
+
+  SessionDetails details;
+  details.session_id = required_member(root, "sessionId", JsonKind::string).scalar;
+  details.project_name = required_member(root, "projectName", JsonKind::string).scalar;
+  details.model = required_member(root, "model", JsonKind::string).scalar;
+  details.message_count = required_integer_member(root, "messageCount");
+  details.status =
+      parse_session_status(required_member(root, "status", JsonKind::string).scalar);
+  details.created_at = required_member(root, "createdAt", JsonKind::string).scalar;
+  details.last_active_at = required_member(root, "lastActiveAt", JsonKind::string).scalar;
+  details.summary = optional_string_member(root, "summary");
+  details.workspace_root = required_member(root, "workspaceRoot", JsonKind::string).scalar;
+  for (const auto& value : required_member(root, "messages", JsonKind::array).array) {
+    if (value.kind != JsonKind::object) {
+      throw SdkError("invalid RPC result: expected session message object");
+    }
+    SessionMessage message;
+    message.id = required_member(value, "id", JsonKind::string).scalar;
+    message.role = parse_session_message_role(
+        required_member(value, "role", JsonKind::string).scalar);
+    message.content = required_member(value, "content", JsonKind::string).scalar;
+    message.timestamp = required_member(value, "timestamp", JsonKind::string).scalar;
+    const auto* tool_calls = value.member("toolCalls");
+    if (tool_calls && tool_calls->kind != JsonKind::null_value) {
+      if (tool_calls->kind != JsonKind::array) {
+        throw SdkError("invalid RPC result: expected array 'toolCalls'");
+      }
+      for (const auto& call : tool_calls->array) {
+        if (call.kind != JsonKind::object) {
+          throw SdkError("invalid RPC result: expected session tool call object");
+        }
+        message.tool_calls.push_back(SessionToolCall{
+            required_member(call, "id", JsonKind::string).scalar,
+            required_member(call, "name", JsonKind::string).scalar,
+            serialize_json(required_member(call, "args", JsonKind::object))});
+      }
+    }
+    details.messages.push_back(std::move(message));
+  }
+  return details;
+}
+
 std::vector<std::string> split_exec_args(const std::string& executable, const std::vector<std::string>& args) {
   std::vector<std::string> all;
   all.push_back(executable);
@@ -1709,6 +1763,14 @@ std::string SessionHistoryParams::to_json() const {
 SessionHistoryResult AutohandSdk::get_session_history(
     const SessionHistoryParams& params) {
   return parse_session_history_result(request("autohand.getHistory", params.to_json()));
+}
+
+SessionDetailsResult AutohandSdk::get_session(const std::string& session_id) {
+  if (session_id.empty() || is_blank(session_id)) {
+    throw SdkError("session_id must not be blank");
+  }
+  return parse_session_details_result(request(
+      "autohand.getSession", "{\"sessionId\":\"" + json_escape(session_id) + "\"}"));
 }
 
 Run::Run(AutohandSdk& sdk, std::string prompt, PromptOptions options)

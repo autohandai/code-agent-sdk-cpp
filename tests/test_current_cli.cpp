@@ -191,6 +191,31 @@ void test_session_history(const std::string& executable) {
   assert(rejected);
 }
 
+void test_session_details(const std::string& executable) {
+  Fixture fixture(
+      executable,
+      "session-details",
+      R"({"success":true,"sessionId":"session-2","projectName":"tin","model":"gpt-5","messageCount":1,"status":"active","createdAt":"2026-07-20T00:00:00Z","lastActiveAt":"2026-07-21T00:00:00Z","summary":"summary","messages":[{"id":"message-1","role":"assistant","content":"done","timestamp":"2026-07-21T00:00:00Z","toolCalls":[{"id":"call-1","name":"read","args":{"path":"README.md"}}]}],"workspaceRoot":"/workspace"})");
+  const auto result = fixture.sdk.get_session("session-2");
+  assert(std::holds_alternative<autohand::SessionDetails>(result));
+  const auto& details = std::get<autohand::SessionDetails>(result);
+  assert(details.session_id == "session-2");
+  assert(details.status == autohand::SessionStatus::Active);
+  assert(details.messages.size() == 1);
+  assert(details.messages.front().role == autohand::SessionMessageRole::Assistant);
+  assert(details.messages.front().tool_calls.front().args_json ==
+         R"({"path":"README.md"})");
+  fixture.assert_request("autohand.getSession", {R"("sessionId":"session-2")"});
+
+  bool rejected = false;
+  try {
+    (void)fixture.sdk.get_session(" ");
+  } catch (const autohand::SdkError&) {
+    rejected = true;
+  }
+  assert(rejected);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -202,5 +227,6 @@ int main(int argc, char** argv) {
   test_directory_access_acknowledgement(executable);
   test_multi_file_change_decisions(executable);
   test_session_history(executable);
+  test_session_details(executable);
   return 0;
 }
