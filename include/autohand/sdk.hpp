@@ -549,6 +549,21 @@ struct LearnRecommendResult {
   std::optional<std::string> error;
 };
 
+enum class SkillUpdateStatus { Updated, Unchanged, Failed };
+
+struct SkillUpdateEntry {
+  std::string name;
+  SkillUpdateStatus status = SkillUpdateStatus::Unchanged;
+};
+
+struct LearnUpdateResult {
+  bool success = false;
+  long long updated = 0;
+  long long unchanged = 0;
+  std::vector<SkillUpdateEntry> results;
+  std::optional<std::string> error;
+};
+
 struct SdkEvent {
   std::string type;
   std::string raw_json;
@@ -656,6 +671,7 @@ class AutohandSdk {
       const McpInvocationResponseParams& params);
   LearnRecommendResult recommend_project_skills(
       const LearnRecommendParams& params = {});
+  LearnUpdateResult update_project_skills();
 
  private:
   class Impl;

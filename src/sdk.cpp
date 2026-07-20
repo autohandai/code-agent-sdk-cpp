@@ -923,6 +923,31 @@ LearnRecommendResult parse_learn_recommend_result(const std::string& json) {
   return result;
 }
 
+SkillUpdateStatus parse_skill_update_status(const std::string& value) {
+  if (value == "updated") return SkillUpdateStatus::Updated;
+  if (value == "unchanged") return SkillUpdateStatus::Unchanged;
+  if (value == "failed") return SkillUpdateStatus::Failed;
+  throw SdkError("invalid RPC result: unknown skill update status '" + value + "'");
+}
+
+LearnUpdateResult parse_learn_update_result(const std::string& json) {
+  const auto root = parse_json_document(json);
+  LearnUpdateResult result;
+  result.success = required_member(root, "success", JsonKind::boolean).boolean;
+  result.updated = required_integer_member(root, "updated");
+  result.unchanged = required_integer_member(root, "unchanged");
+  for (const auto& value : required_member(root, "results", JsonKind::array).array) {
+    if (value.kind != JsonKind::object) {
+      throw SdkError("invalid RPC result: expected skill update object");
+    }
+    result.results.push_back(SkillUpdateEntry{
+        required_member(value, "name", JsonKind::string).scalar,
+        parse_skill_update_status(required_member(value, "status", JsonKind::string).scalar)});
+  }
+  result.error = optional_string_member(root, "error");
+  return result;
+}
+
 std::vector<std::string> split_exec_args(const std::string& executable, const std::vector<std::string>& args) {
   std::vector<std::string> all;
   all.push_back(executable);
@@ -1962,6 +1987,10 @@ LearnRecommendResult AutohandSdk::recommend_project_skills(
     const LearnRecommendParams& params) {
   return parse_learn_recommend_result(
       request("autohand.learn.recommend", params.to_json()));
+}
+
+LearnUpdateResult AutohandSdk::update_project_skills() {
+  return parse_learn_update_result(request("autohand.learn.update"));
 }
 
 Run::Run(AutohandSdk& sdk, std::string prompt, PromptOptions options)

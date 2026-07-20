@@ -328,6 +328,20 @@ void test_project_learning_recommendations(const std::string& executable) {
   fixture.assert_request("autohand.learn.recommend", {R"("deep":true)"});
 }
 
+void test_project_learning_updates(const std::string& executable) {
+  Fixture fixture(
+      executable,
+      "learn-update",
+      R"({"success":true,"updated":1,"unchanged":1,"results":[{"name":"cpp-testing","status":"updated"},{"name":"cmake","status":"unchanged"}]})");
+  const auto result = fixture.sdk.update_project_skills();
+  assert(result.success);
+  assert(result.updated == 1);
+  assert(result.unchanged == 1);
+  assert(result.results.size() == 2);
+  assert(result.results.front().status == autohand::SkillUpdateStatus::Updated);
+  fixture.assert_request("autohand.learn.update", {});
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -345,5 +359,6 @@ int main(int argc, char** argv) {
   test_vscode_mcp_tool_registration(executable);
   test_mcp_invocation_responses(executable);
   test_project_learning_recommendations(executable);
+  test_project_learning_updates(executable);
   return 0;
 }
