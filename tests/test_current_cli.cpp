@@ -380,6 +380,51 @@ void test_context_compaction_control(const std::string& executable) {
   fixture.assert_request("autohand.setContextCompact", {R"("enabled":true)"});
 }
 
+void test_automode_iteration_events(const std::string& executable) {
+  Fixture fixture(
+      executable,
+      "automode-iteration",
+      "{}",
+      R"({"jsonrpc":"2.0","method":"autohand.automode.iteration","params":{"sessionId":"session-auto","iteration":3,"actions":["read","write"],"tokensUsed":400,"timestamp":"2026-07-21T00:00:00Z"}})");
+  std::vector<autohand::SdkEvent> events;
+  fixture.sdk.stream_prompt("continue", [&](const auto& event) { events.push_back(event); });
+  assert(events.size() == 1);
+  assert(events.front().type == "automode_iteration");
+  const auto* iteration =
+      std::get_if<autohand::AutomodeIterationEvent>(&events.front().payload);
+  assert(iteration != nullptr);
+  assert(iteration->session_id == "session-auto");
+  assert(iteration->iteration == 3);
+  assert(iteration->actions.size() == 2);
+  assert(iteration->tokens_used == 400);
+
+  const auto unknown = autohand::sdk_event_from_notification(
+      "autohand.futureNotification", R"({"value":1})");
+  assert(unknown.type == "futureNotification");
+  assert(std::holds_alternative<std::monostate>(unknown.payload));
+
+  bool rejected = false;
+  try {
+    (void)autohand::sdk_event_from_notification(
+        "autohand.automode.iteration", R"({"sessionId":"missing-fields"})");
+  } catch (const autohand::SdkError&) {
+    rejected = true;
+  }
+  assert(rejected);
+
+  Fixture malformed_fixture(
+      executable,
+      "automode-iteration-malformed",
+      "{}",
+      R"({"jsonrpc":"2.0","method":"autohand.automode.iteration","params":{"sessionId":"missing-fields"}})");
+  std::vector<autohand::SdkEvent> malformed_events;
+  malformed_fixture.sdk.stream_prompt(
+      "continue", [&](const auto& event) { malformed_events.push_back(event); });
+  assert(malformed_events.size() == 1);
+  assert(malformed_events.front().type == "error");
+  assert(std::holds_alternative<std::monostate>(malformed_events.front().payload));
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -401,5 +446,6 @@ int main(int argc, char** argv) {
   test_skill_generation(executable);
   test_tools_registry(executable);
   test_context_compaction_control(executable);
+  test_automode_iteration_events(executable);
   return 0;
 }

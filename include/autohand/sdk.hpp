@@ -611,9 +611,20 @@ struct ContextCompactResult {
   bool enabled = false;
 };
 
+struct AutomodeIterationEvent {
+  std::string session_id;
+  long long iteration = 0;
+  std::vector<std::string> actions;
+  std::optional<long long> tokens_used;
+  std::string timestamp;
+};
+
+using SdkEventPayload = std::variant<std::monostate, AutomodeIterationEvent>;
+
 struct SdkEvent {
   std::string type;
   std::string raw_json;
+  SdkEventPayload payload;
 
   std::string text_delta() const;
   std::string message_content() const;

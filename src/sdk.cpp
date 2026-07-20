@@ -1014,6 +1014,22 @@ ContextCompactResult parse_context_compact_result(const std::string& json) {
       required_member(root, "enabled", JsonKind::boolean).boolean};
 }
 
+AutomodeIterationEvent parse_automode_iteration_event(const std::string& json) {
+  const auto root = parse_json_document(json);
+  AutomodeIterationEvent event;
+  event.session_id = required_member(root, "sessionId", JsonKind::string).scalar;
+  event.iteration = required_integer_member(root, "iteration");
+  for (const auto& value : required_member(root, "actions", JsonKind::array).array) {
+    if (value.kind != JsonKind::string) {
+      throw SdkError("invalid RPC notification: expected string auto-mode action");
+    }
+    event.actions.push_back(value.scalar);
+  }
+  event.tokens_used = optional_integer_member(root, "tokensUsed");
+  event.timestamp = required_member(root, "timestamp", JsonKind::string).scalar;
+  return event;
+}
+
 std::vector<std::string> split_exec_args(const std::string& executable, const std::vector<std::string>& args) {
   std::vector<std::string> all;
   all.push_back(executable);
@@ -1640,7 +1656,16 @@ class AutohandSdk::Impl {
     if (method.empty()) return;
     const auto* params_value = root.member("params");
     const auto params = params_value ? serialize_json(*params_value) : "null";
-    auto event = sdk_event_from_notification(method, params);
+    SdkEvent event;
+    try {
+      event = sdk_event_from_notification(method, params);
+    } catch (const SdkError& error) {
+      event = SdkEvent{
+          "error",
+          "{\"method\":\"" + json_escape(method) + "\",\"error\":\"" +
+              json_escape(error.what()) + "\"}",
+          std::monostate{}};
+    }
     {
       std::lock_guard lock(event_mutex_);
       events_.push_back(std::move(event));
@@ -2340,6 +2365,7 @@ std::string event_type_from_method(const std::string& method, const std::string&
   if (method == "autohand.toolUpdate") return "tool_update";
   if (method == "autohand.toolEnd") return "tool_end";
   if (method == "autohand.permissionRequest") return "permission_request";
+  if (method == "autohand.automode.iteration") return "automode_iteration";
   if (method.rfind("autohand.autoresearch.", 0) == 0) return "autoresearch";
   if (method == "autohand.error") return "error";
   constexpr std::string_view prefix = "autohand.";
@@ -2357,7 +2383,14 @@ SdkEvent sdk_event_from_notification(const std::string& method, const std::strin
       normalized_params = "{\"phase\":\"" + phase + "\"," + params_json.substr(1);
     }
   }
-  return SdkEvent{event_type_from_method(method, normalized_params), normalized_params};
+  if (method == "autohand.automode.iteration") {
+    return SdkEvent{
+        "automode_iteration",
+        normalized_params,
+        parse_automode_iteration_event(normalized_params)};
+  }
+  return SdkEvent{
+      event_type_from_method(method, normalized_params), normalized_params, std::monostate{}};
 }
 
 }  // namespace autohand
