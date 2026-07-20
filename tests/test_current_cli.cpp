@@ -512,6 +512,25 @@ void test_pre_prompt_hook_events(const std::string& executable) {
   assert(hook->mentioned_files.back() == "src/sdk.cpp");
 }
 
+void test_post_response_hook_events(const std::string& executable) {
+  Fixture fixture(
+      executable,
+      "hook-post-response",
+      "{}",
+      R"({"jsonrpc":"2.0","method":"autohand.hook.postResponse","params":{"tokensUsed":1300,"tokensUsageStatus":"actual","toolCallsCount":4,"duration":225.5,"timestamp":"2026-07-21T00:06:00Z"}})");
+  std::vector<autohand::SdkEvent> events;
+  fixture.sdk.stream_prompt("continue", [&](const auto& event) { events.push_back(event); });
+  assert(events.size() == 1);
+  assert(events.front().type == "hook_post_response");
+  const auto* hook =
+      std::get_if<autohand::PostResponseHookEvent>(&events.front().payload);
+  assert(hook != nullptr);
+  assert(hook->tokens_used == 1300);
+  assert(hook->tokens_usage_status == autohand::TokensUsageStatus::Actual);
+  assert(hook->tool_calls_count == 4);
+  assert(hook->duration == 225.5);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -539,5 +558,6 @@ int main(int argc, char** argv) {
   test_pre_tool_hook_events(executable);
   test_post_tool_hook_events(executable);
   test_pre_prompt_hook_events(executable);
+  test_post_response_hook_events(executable);
   return 0;
 }

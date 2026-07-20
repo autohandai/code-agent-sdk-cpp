@@ -655,6 +655,16 @@ struct PrePromptHookEvent {
   std::string timestamp;
 };
 
+enum class TokensUsageStatus { Actual, Unavailable };
+
+struct PostResponseHookEvent {
+  long long tokens_used = 0;
+  std::optional<TokensUsageStatus> tokens_usage_status;
+  long long tool_calls_count = 0;
+  double duration = 0;
+  std::string timestamp;
+};
+
 using SdkEventPayload =
     std::variant<
         std::monostate,
@@ -663,7 +673,8 @@ using SdkEventPayload =
         AutomodeErrorEvent,
         PreToolHookEvent,
         PostToolHookEvent,
-        PrePromptHookEvent>;
+        PrePromptHookEvent,
+        PostResponseHookEvent>;
 
 struct SdkEvent {
   std::string type;

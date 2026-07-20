@@ -1083,6 +1083,24 @@ PrePromptHookEvent parse_pre_prompt_hook_event(const std::string& json) {
   return event;
 }
 
+TokensUsageStatus parse_tokens_usage_status(const std::string& value) {
+  if (value == "actual") return TokensUsageStatus::Actual;
+  if (value == "unavailable") return TokensUsageStatus::Unavailable;
+  throw SdkError("invalid RPC notification: unknown tokens usage status '" + value + "'");
+}
+
+PostResponseHookEvent parse_post_response_hook_event(const std::string& json) {
+  const auto root = parse_json_document(json);
+  PostResponseHookEvent event;
+  event.tokens_used = required_integer_member(root, "tokensUsed");
+  const auto status = optional_string_member(root, "tokensUsageStatus");
+  if (status) event.tokens_usage_status = parse_tokens_usage_status(*status);
+  event.tool_calls_count = required_integer_member(root, "toolCallsCount");
+  event.duration = required_double_member(root, "duration");
+  event.timestamp = required_member(root, "timestamp", JsonKind::string).scalar;
+  return event;
+}
+
 std::vector<std::string> split_exec_args(const std::string& executable, const std::vector<std::string>& args) {
   std::vector<std::string> all;
   all.push_back(executable);
@@ -2424,6 +2442,7 @@ std::string event_type_from_method(const std::string& method, const std::string&
   if (method == "autohand.hook.preTool") return "hook_pre_tool";
   if (method == "autohand.hook.postTool") return "hook_post_tool";
   if (method == "autohand.hook.prePrompt") return "hook_pre_prompt";
+  if (method == "autohand.hook.postResponse") return "hook_post_response";
   if (method.rfind("autohand.autoresearch.", 0) == 0) return "autoresearch";
   if (method == "autohand.error") return "error";
   constexpr std::string_view prefix = "autohand.";
@@ -2471,6 +2490,11 @@ SdkEvent sdk_event_from_notification(const std::string& method, const std::strin
     return SdkEvent{
         "hook_pre_prompt", normalized_params,
         parse_pre_prompt_hook_event(normalized_params)};
+  }
+  if (method == "autohand.hook.postResponse") {
+    return SdkEvent{
+        "hook_post_response", normalized_params,
+        parse_post_response_hook_event(normalized_params)};
   }
   return SdkEvent{
       event_type_from_method(method, normalized_params), normalized_params, std::monostate{}};
