@@ -479,6 +479,27 @@ struct YoloSetResult {
   std::optional<long long> expires_in;
 };
 
+struct McpObjectInputSchema {
+  std::string properties_json = "{}";
+  std::vector<std::string> required;
+};
+
+struct VscodeMcpTool {
+  std::string name;
+  std::string description;
+  std::string server_name;
+  std::optional<McpObjectInputSchema> input_schema;
+};
+
+struct SetVscodeMcpToolsParams {
+  std::vector<VscodeMcpTool> tools;
+  std::string to_json() const;
+};
+
+struct SetVscodeMcpToolsResult {
+  bool success = false;
+};
+
 struct SdkEvent {
   std::string type;
   std::string raw_json;
@@ -580,6 +601,8 @@ class AutohandSdk {
   SessionAttachResult attach_session(const SessionAttachParams& params);
   YoloSetResult set_yolo(const YoloSetParams& params);
   YoloSetResult set_yolo_compat(const YoloSetParams& params);
+  SetVscodeMcpToolsResult set_vscode_mcp_tools(
+      const SetVscodeMcpToolsParams& params);
 
  private:
   class Impl;

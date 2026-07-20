@@ -259,6 +259,32 @@ void test_timed_yolo_mode(const std::string& executable) {
   assert(rejected);
 }
 
+void test_vscode_mcp_tool_registration(const std::string& executable) {
+  Fixture fixture(executable, "vscode-tools", R"({"success":true})");
+  autohand::SetVscodeMcpToolsParams params;
+  params.tools.push_back(autohand::VscodeMcpTool{
+      "workspace.read",
+      "Read a workspace file",
+      "vscode",
+      autohand::McpObjectInputSchema{
+          R"({"path":{"type":"string"}})", {"path"}}});
+  const auto result = fixture.sdk.set_vscode_mcp_tools(params);
+  assert(result.success);
+  fixture.assert_request(
+      "autohand.mcp.setVscodeTools",
+      {R"("name":"workspace.read")", R"("serverName":"vscode")",
+       R"("inputSchema":{"type":"object")", R"("required":["path"])"});
+
+  params.tools.front().input_schema->properties_json = "[]";
+  bool rejected = false;
+  try {
+    (void)fixture.sdk.set_vscode_mcp_tools(params);
+  } catch (const autohand::SdkError&) {
+    rejected = true;
+  }
+  assert(rejected);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -273,5 +299,6 @@ int main(int argc, char** argv) {
   test_session_details(executable);
   test_session_attachment(executable);
   test_timed_yolo_mode(executable);
+  test_vscode_mcp_tool_registration(executable);
   return 0;
 }

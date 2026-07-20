@@ -866,6 +866,12 @@ YoloSetResult parse_yolo_set_result(const std::string& json) {
       optional_integer_member(root, "expiresIn")};
 }
 
+SetVscodeMcpToolsResult parse_set_vscode_mcp_tools_result(const std::string& json) {
+  const auto root = parse_json_document(json);
+  return SetVscodeMcpToolsResult{
+      required_member(root, "success", JsonKind::boolean).boolean};
+}
+
 std::vector<std::string> split_exec_args(const std::string& executable, const std::vector<std::string>& args) {
   std::vector<std::string> all;
   all.push_back(executable);
@@ -1820,6 +1826,52 @@ YoloSetResult AutohandSdk::set_yolo(const YoloSetParams& params) {
 
 YoloSetResult AutohandSdk::set_yolo_compat(const YoloSetParams& params) {
   return parse_yolo_set_result(request("autohand.yolo.set", params.to_json()));
+}
+
+std::string SetVscodeMcpToolsParams::to_json() const {
+  std::ostringstream output;
+  output << "{\"tools\":[";
+  for (std::size_t tool_index = 0; tool_index < tools.size(); ++tool_index) {
+    const auto& tool = tools[tool_index];
+    if (tool.name.empty() || is_blank(tool.name) || tool.description.empty() ||
+        is_blank(tool.description) || tool.server_name.empty() || is_blank(tool.server_name)) {
+      throw SdkError("VS Code MCP tool name, description, and server_name must not be blank");
+    }
+    if (tool_index > 0) output << ',';
+    output << "{\"name\":\"" << json_escape(tool.name) << "\",\"description\":\""
+           << json_escape(tool.description) << "\",\"serverName\":\""
+           << json_escape(tool.server_name) << '"';
+    if (tool.input_schema) {
+      const auto properties = parse_json_document(tool.input_schema->properties_json);
+      if (properties.kind != JsonKind::object) {
+        throw SdkError("MCP input schema properties_json must contain a JSON object");
+      }
+      output << ",\"inputSchema\":{\"type\":\"object\",\"properties\":"
+             << serialize_json(properties);
+      if (!tool.input_schema->required.empty()) {
+        output << ",\"required\":[";
+        for (std::size_t index = 0; index < tool.input_schema->required.size(); ++index) {
+          const auto& name = tool.input_schema->required[index];
+          if (name.empty() || is_blank(name)) {
+            throw SdkError("MCP input schema required names must not be blank");
+          }
+          if (index > 0) output << ',';
+          output << '"' << json_escape(name) << '"';
+        }
+        output << ']';
+      }
+      output << '}';
+    }
+    output << '}';
+  }
+  output << "]}";
+  return output.str();
+}
+
+SetVscodeMcpToolsResult AutohandSdk::set_vscode_mcp_tools(
+    const SetVscodeMcpToolsParams& params) {
+  return parse_set_vscode_mcp_tools_result(
+      request("autohand.mcp.setVscodeTools", params.to_json()));
 }
 
 Run::Run(AutohandSdk& sdk, std::string prompt, PromptOptions options)
