@@ -73,6 +73,9 @@ while IFS= read -r line; do
     *autohand.automode.cancel*)
       printf '{"jsonrpc":"2.0","id":%s,"result":{"success":true}}\n' "$id"
       ;;
+    *autohand.automode.getLog*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"success":true,"iterations":[{"iteration":4,"timestamp":"2026-07-20T00:04:00.000Z","actions":["edit","test"],"tokensUsed":1200,"cost":0.42,"checkpoint":{"commit":"checkpoint-1","message":"iteration 4"}}]}}\n' "$id"
+      ;;
     *autohand.getSkillsRegistry*)
       printf '{"jsonrpc":"2.0","id":%s,"result":{"success":true,"skills":[{"id":"skill-1","name":"review","description":"Review code","category":"quality","tags":["cpp"],"rating":4.5,"downloadCount":8,"isFeatured":true}],"categories":[{"name":"quality","count":1}]}}\n' "$id"
       ;;
@@ -425,6 +428,16 @@ int main(int argc, char** argv) {
   assert(automode_cancel.to_json() == R"({"reason":"release window closed"})");
   const auto cancelled = sdk.cancel_automode(automode_cancel);
   assert(cancelled.success && !cancelled.error);
+  autohand::AutomodeGetLogParams automode_log_params{25};
+  assert(automode_log_params.to_json() == R"({"limit":25})");
+  const auto automode_log = sdk.get_automode_log(automode_log_params);
+  assert(automode_log.success);
+  assert(automode_log.iterations.size() == 1);
+  assert(automode_log.iterations[0].actions == std::vector<std::string>({"edit", "test"}));
+  assert(automode_log.iterations[0].tokens_used == 1200);
+  assert(automode_log.iterations[0].cost == 0.42);
+  assert(automode_log.iterations[0].checkpoint);
+  assert(automode_log.iterations[0].checkpoint->commit == "checkpoint-1");
   assert(autohand::json_get_string(sdk.create_goal(goal), "method") == "autohand.goal.create");
   assert(autohand::json_get_string(sdk.get_goal(), "method") == "autohand.goal.get");
   autohand::GoalParams update;

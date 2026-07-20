@@ -593,6 +593,42 @@ AutomodeOperationResult parse_automode_operation_result(const std::string& json)
   return result;
 }
 
+AutomodeGetLogResult parse_automode_get_log_result(const std::string& json) {
+  const auto root = parse_json_document(json);
+  AutomodeGetLogResult result;
+  result.success = required_member(root, "success", JsonKind::boolean).boolean;
+  result.error = optional_string_member(root, "error");
+  const auto& iterations = required_member(root, "iterations", JsonKind::array);
+  for (const auto& value : iterations.array) {
+    if (value.kind != JsonKind::object) {
+      throw SdkError("invalid RPC result: expected auto-mode log entry object");
+    }
+    AutomodeLogEntry entry;
+    entry.iteration = required_integer_member(value, "iteration");
+    entry.timestamp = required_member(value, "timestamp", JsonKind::string).scalar;
+    const auto& actions = required_member(value, "actions", JsonKind::array);
+    for (const auto& action : actions.array) {
+      if (action.kind != JsonKind::string) {
+        throw SdkError("invalid RPC result: expected string auto-mode action");
+      }
+      entry.actions.push_back(action.scalar);
+    }
+    entry.tokens_used = optional_integer_member(value, "tokensUsed");
+    entry.cost = optional_double_member(value, "cost");
+    const auto* checkpoint = value.member("checkpoint");
+    if (checkpoint && checkpoint->kind != JsonKind::null_value) {
+      if (checkpoint->kind != JsonKind::object) {
+        throw SdkError("invalid RPC result: expected object 'checkpoint'");
+      }
+      entry.checkpoint = AutomodeLogCheckpoint{
+          required_member(*checkpoint, "commit", JsonKind::string).scalar,
+          required_member(*checkpoint, "message", JsonKind::string).scalar};
+    }
+    result.iterations.push_back(std::move(entry));
+  }
+  return result;
+}
+
 GetSkillsRegistryResult parse_skills_registry_result(const std::string& json) {
   const auto root = parse_json_document(json);
   GetSkillsRegistryResult result;
@@ -933,6 +969,11 @@ std::string AutomodeStartParams::to_json() const {
 std::string AutomodeCancelParams::to_json() const {
   if (!reason) return "{}";
   return "{\"reason\":\"" + json_escape(*reason) + "\"}";
+}
+
+std::string AutomodeGetLogParams::to_json() const {
+  if (!limit) return "{}";
+  return "{\"limit\":" + std::to_string(*limit) + "}";
 }
 
 std::string InstallSkillParams::to_json() const {
@@ -1411,6 +1452,10 @@ AutomodeOperationResult AutohandSdk::cancel_automode(const AutomodeCancelParams&
   return parse_automode_operation_result(
       request("autohand.automode.cancel", params.to_json()));
 }
+AutomodeGetLogResult AutohandSdk::get_automode_log(const AutomodeGetLogParams& params) {
+  return parse_automode_get_log_result(
+      request("autohand.automode.getLog", params.to_json()));
+}
 GetSkillsRegistryResult AutohandSdk::get_skills_registry(const GetSkillsRegistryParams& params) {
   return parse_skills_registry_result(request("autohand.getSkillsRegistry", params.to_json()));
 }
@@ -1603,6 +1648,9 @@ AutomodeOperationResult Agent::pause_automode() { return sdk_.pause_automode(); 
 AutomodeOperationResult Agent::resume_automode() { return sdk_.resume_automode(); }
 AutomodeOperationResult Agent::cancel_automode(const AutomodeCancelParams& params) {
   return sdk_.cancel_automode(params);
+}
+AutomodeGetLogResult Agent::get_automode_log(const AutomodeGetLogParams& params) {
+  return sdk_.get_automode_log(params);
 }
 GetSkillsRegistryResult Agent::get_skills_registry(const GetSkillsRegistryParams& params) {
   return sdk_.get_skills_registry(params);

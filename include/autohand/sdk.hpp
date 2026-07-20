@@ -238,6 +238,31 @@ struct AutomodeCancelParams {
   std::string to_json() const;
 };
 
+struct AutomodeGetLogParams {
+  std::optional<long long> limit;
+  std::string to_json() const;
+};
+
+struct AutomodeLogCheckpoint {
+  std::string commit;
+  std::string message;
+};
+
+struct AutomodeLogEntry {
+  long long iteration = 0;
+  std::string timestamp;
+  std::vector<std::string> actions;
+  std::optional<long long> tokens_used;
+  std::optional<double> cost;
+  std::optional<AutomodeLogCheckpoint> checkpoint;
+};
+
+struct AutomodeGetLogResult {
+  bool success = false;
+  std::vector<AutomodeLogEntry> iterations;
+  std::optional<std::string> error;
+};
+
 struct CommunitySkill {
   std::string id;
   std::string name;
@@ -382,6 +407,7 @@ class AutohandSdk {
   AutomodeOperationResult pause_automode();
   AutomodeOperationResult resume_automode();
   AutomodeOperationResult cancel_automode(const AutomodeCancelParams& params = {});
+  AutomodeGetLogResult get_automode_log(const AutomodeGetLogParams& params = {});
   GetSkillsRegistryResult get_skills_registry(const GetSkillsRegistryParams& params = {});
   InstallSkillResult install_skill(const InstallSkillParams& params);
   McpListServersResult list_mcp_servers();
@@ -472,6 +498,7 @@ class Agent {
   AutomodeOperationResult pause_automode();
   AutomodeOperationResult resume_automode();
   AutomodeOperationResult cancel_automode(const AutomodeCancelParams& params = {});
+  AutomodeGetLogResult get_automode_log(const AutomodeGetLogParams& params = {});
   GetSkillsRegistryResult get_skills_registry(const GetSkillsRegistryParams& params = {});
   InstallSkillResult install_skill(const InstallSkillParams& params);
   McpListServersResult list_mcp_servers();
