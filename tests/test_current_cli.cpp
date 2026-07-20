@@ -238,6 +238,27 @@ void test_session_attachment(const std::string& executable) {
   assert(rejected);
 }
 
+void test_timed_yolo_mode(const std::string& executable) {
+  Fixture fixture(
+      executable, "timed-yolo", R"({"success":true,"expiresIn":90})");
+  const auto result = fixture.sdk.set_yolo({"*", 90});
+  assert(result.success);
+  assert(result.expires_in == 90);
+  fixture.assert_request(
+      "autohand.yoloSet", {R"("pattern":"*")", R"("timeoutSeconds":90)"});
+
+  (void)fixture.sdk.set_yolo_compat({"", std::nullopt});
+  fixture.assert_request("autohand.yolo.set", {R"("pattern":"")"});
+
+  bool rejected = false;
+  try {
+    (void)fixture.sdk.set_yolo({"*", 0});
+  } catch (const autohand::SdkError&) {
+    rejected = true;
+  }
+  assert(rejected);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -251,5 +272,6 @@ int main(int argc, char** argv) {
   test_session_history(executable);
   test_session_details(executable);
   test_session_attachment(executable);
+  test_timed_yolo_mode(executable);
   return 0;
 }

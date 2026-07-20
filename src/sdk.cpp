@@ -859,6 +859,13 @@ SessionAttachResult parse_session_attach_result(const std::string& json) {
   return result;
 }
 
+YoloSetResult parse_yolo_set_result(const std::string& json) {
+  const auto root = parse_json_document(json);
+  return YoloSetResult{
+      required_member(root, "success", JsonKind::boolean).boolean,
+      optional_integer_member(root, "expiresIn")};
+}
+
 std::vector<std::string> split_exec_args(const std::string& executable, const std::vector<std::string>& args) {
   std::vector<std::string> all;
   all.push_back(executable);
@@ -1794,6 +1801,25 @@ std::string SessionAttachParams::to_json() const {
 SessionAttachResult AutohandSdk::attach_session(const SessionAttachParams& params) {
   return parse_session_attach_result(
       request("autohand.session.attach", params.to_json()));
+}
+
+std::string YoloSetParams::to_json() const {
+  if (timeout_seconds && *timeout_seconds <= 0) {
+    throw SdkError("YOLO timeout_seconds must be positive");
+  }
+  std::ostringstream output;
+  output << "{\"pattern\":\"" << json_escape(pattern) << '"';
+  if (timeout_seconds) output << ",\"timeoutSeconds\":" << *timeout_seconds;
+  output << '}';
+  return output.str();
+}
+
+YoloSetResult AutohandSdk::set_yolo(const YoloSetParams& params) {
+  return parse_yolo_set_result(request("autohand.yoloSet", params.to_json()));
+}
+
+YoloSetResult AutohandSdk::set_yolo_compat(const YoloSetParams& params) {
+  return parse_yolo_set_result(request("autohand.yolo.set", params.to_json()));
 }
 
 Run::Run(AutohandSdk& sdk, std::string prompt, PromptOptions options)

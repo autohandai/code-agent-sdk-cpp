@@ -468,6 +468,17 @@ struct SessionAttachResult {
   std::optional<std::string> error;
 };
 
+struct YoloSetParams {
+  std::string pattern;
+  std::optional<long long> timeout_seconds;
+  std::string to_json() const;
+};
+
+struct YoloSetResult {
+  bool success = false;
+  std::optional<long long> expires_in;
+};
+
 struct SdkEvent {
   std::string type;
   std::string raw_json;
@@ -567,6 +578,8 @@ class AutohandSdk {
   SessionHistoryResult get_session_history(const SessionHistoryParams& params = {});
   SessionDetailsResult get_session(const std::string& session_id);
   SessionAttachResult attach_session(const SessionAttachParams& params);
+  YoloSetResult set_yolo(const YoloSetParams& params);
+  YoloSetResult set_yolo_compat(const YoloSetParams& params);
 
  private:
   class Impl;
