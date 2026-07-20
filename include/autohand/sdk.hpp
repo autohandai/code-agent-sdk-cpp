@@ -677,6 +677,19 @@ struct McpToolsChangedEvent {
   std::string timestamp;
 };
 
+enum class LearningProgressStatus {
+  Analyzing,
+  LoadingRegistry,
+  Evaluating,
+  Generating,
+  Updating
+};
+
+struct LearningProgressEvent {
+  LearningProgressStatus status = LearningProgressStatus::Analyzing;
+  std::string timestamp;
+};
+
 using SdkEventPayload =
     std::variant<
         std::monostate,
@@ -688,7 +701,8 @@ using SdkEventPayload =
         PrePromptHookEvent,
         PostResponseHookEvent,
         McpInvocationRequestEvent,
-        McpToolsChangedEvent>;
+        McpToolsChangedEvent,
+        LearningProgressEvent>;
 
 struct SdkEvent {
   std::string type;

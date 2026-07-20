@@ -1126,6 +1126,23 @@ McpToolsChangedEvent parse_mcp_tools_changed_event(const std::string& json) {
   return event;
 }
 
+LearningProgressStatus parse_learning_progress_status(const std::string& value) {
+  if (value == "analyzing") return LearningProgressStatus::Analyzing;
+  if (value == "loading-registry") return LearningProgressStatus::LoadingRegistry;
+  if (value == "evaluating") return LearningProgressStatus::Evaluating;
+  if (value == "generating") return LearningProgressStatus::Generating;
+  if (value == "updating") return LearningProgressStatus::Updating;
+  throw SdkError("invalid RPC notification: unknown learning progress status '" + value + "'");
+}
+
+LearningProgressEvent parse_learning_progress_event(const std::string& json) {
+  const auto root = parse_json_document(json);
+  return LearningProgressEvent{
+      parse_learning_progress_status(
+          required_member(root, "status", JsonKind::string).scalar),
+      required_member(root, "timestamp", JsonKind::string).scalar};
+}
+
 std::vector<std::string> split_exec_args(const std::string& executable, const std::vector<std::string>& args) {
   std::vector<std::string> all;
   all.push_back(executable);
@@ -2470,6 +2487,7 @@ std::string event_type_from_method(const std::string& method, const std::string&
   if (method == "autohand.hook.postResponse") return "hook_post_response";
   if (method == "autohand.mcp.invokeRequest") return "mcp_invoke_request";
   if (method == "autohand.mcp.toolsChanged") return "mcp_tools_changed";
+  if (method == "autohand.learn.progress") return "learn_progress";
   if (method.rfind("autohand.autoresearch.", 0) == 0) return "autoresearch";
   if (method == "autohand.error") return "error";
   constexpr std::string_view prefix = "autohand.";
@@ -2532,6 +2550,11 @@ SdkEvent sdk_event_from_notification(const std::string& method, const std::strin
     return SdkEvent{
         "mcp_tools_changed", normalized_params,
         parse_mcp_tools_changed_event(normalized_params)};
+  }
+  if (method == "autohand.learn.progress") {
+    return SdkEvent{
+        "learn_progress", normalized_params,
+        parse_learning_progress_event(normalized_params)};
   }
   return SdkEvent{
       event_type_from_method(method, normalized_params), normalized_params, std::monostate{}};

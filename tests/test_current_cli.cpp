@@ -567,6 +567,33 @@ void test_mcp_tools_changed_events(const std::string& executable) {
   assert(changed->tools.front().server_name == "vscode");
 }
 
+void test_learning_progress_events(const std::string& executable) {
+  Fixture fixture(
+      executable,
+      "learn-progress",
+      "{}",
+      R"({"jsonrpc":"2.0","method":"autohand.learn.progress","params":{"status":"loading-registry","timestamp":"2026-07-21T00:09:00Z"}})");
+  std::vector<autohand::SdkEvent> events;
+  fixture.sdk.stream_prompt("continue", [&](const auto& event) { events.push_back(event); });
+  assert(events.size() == 1);
+  assert(events.front().type == "learn_progress");
+  const auto* progress =
+      std::get_if<autohand::LearningProgressEvent>(&events.front().payload);
+  assert(progress != nullptr);
+  assert(progress->status == autohand::LearningProgressStatus::LoadingRegistry);
+  assert(progress->timestamp == "2026-07-21T00:09:00Z");
+
+  bool rejected = false;
+  try {
+    (void)autohand::sdk_event_from_notification(
+        "autohand.learn.progress",
+        R"({"status":"unknown","timestamp":"2026-07-21T00:09:00Z"})");
+  } catch (const autohand::SdkError&) {
+    rejected = true;
+  }
+  assert(rejected);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -597,5 +624,6 @@ int main(int argc, char** argv) {
   test_post_response_hook_events(executable);
   test_mcp_invocation_request_events(executable);
   test_mcp_tools_changed_events(executable);
+  test_learning_progress_events(executable);
   return 0;
 }
