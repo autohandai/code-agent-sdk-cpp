@@ -665,6 +665,97 @@ struct PostResponseHookEvent {
   std::string timestamp;
 };
 
+enum class HookFileChangeType { Create, Modify, Delete };
+
+struct FileModifiedHookEvent {
+  std::string file_path;
+  HookFileChangeType change_type = HookFileChangeType::Modify;
+  std::string tool_id;
+  std::string timestamp;
+};
+
+struct SessionErrorHookEvent {
+  std::string error;
+  std::optional<std::string> code;
+  std::optional<std::string> context_json;
+  std::string timestamp;
+};
+
+struct StopHookEvent {
+  long long tokens_used = 0;
+  std::optional<TokensUsageStatus> tokens_usage_status;
+  long long tool_calls_count = 0;
+  double duration = 0;
+  std::string timestamp;
+};
+
+enum class HookSessionType { Startup, Resume, Clear };
+
+struct SessionStartHookEvent {
+  HookSessionType session_type = HookSessionType::Startup;
+  std::string timestamp;
+};
+
+enum class HookSessionEndReason { Quit, Clear, Exit, Error };
+
+struct SessionEndHookEvent {
+  HookSessionEndReason reason = HookSessionEndReason::Exit;
+  double duration = 0;
+  std::string timestamp;
+};
+
+struct SubagentStopHookEvent {
+  std::string subagent_id;
+  std::string subagent_name;
+  std::string subagent_type;
+  bool success = false;
+  double duration = 0;
+  std::optional<std::string> error;
+  std::string timestamp;
+};
+
+struct PermissionRequestHookEvent {
+  std::string tool;
+  std::optional<std::string> path;
+  std::optional<std::string> command;
+  std::optional<std::string> args_json;
+  std::string timestamp;
+};
+
+struct NotificationHookEvent {
+  std::string notification_type;
+  std::string message;
+  std::string timestamp;
+};
+
+struct ContextCompactedHookEvent {
+  long long cropped_count = 0;
+  std::optional<std::string> summary;
+  double usage_percent = 0;
+  std::string reason;
+  std::string timestamp;
+};
+
+struct ContextOverflowHookEvent {
+  long long tokens_before = 0;
+  long long tokens_after = 0;
+  long long cropped_count = 0;
+  double usage_percent = 0;
+  std::string timestamp;
+};
+
+struct ContextWarningHookEvent {
+  double usage_percent = 0;
+  long long remaining_tokens = 0;
+  std::string timestamp;
+};
+
+struct ContextCriticalHookEvent {
+  double usage_percent = 0;
+  long long remaining_tokens = 0;
+  std::string timestamp;
+};
+
 struct McpInvocationRequestEvent {
   std::string request_id;
   std::string tool_name;
@@ -700,6 +791,18 @@ using SdkEventPayload =
         PostToolHookEvent,
         PrePromptHookEvent,
         PostResponseHookEvent,
+        FileModifiedHookEvent,
+        SessionErrorHookEvent,
+        StopHookEvent,
+        SessionStartHookEvent,
+        SessionEndHookEvent,
+        SubagentStopHookEvent,
+        PermissionRequestHookEvent,
+        NotificationHookEvent,
+        ContextCompactedHookEvent,
+        ContextOverflowHookEvent,
+        ContextWarningHookEvent,
+        ContextCriticalHookEvent,
         McpInvocationRequestEvent,
         McpToolsChangedEvent,
         LearningProgressEvent>;
@@ -708,6 +811,7 @@ struct SdkEvent {
   std::string type;
   std::string raw_json;
   SdkEventPayload payload;
+  std::string method;
 
   std::string text_delta() const;
   std::string message_content() const;

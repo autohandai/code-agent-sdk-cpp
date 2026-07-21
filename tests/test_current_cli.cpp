@@ -401,6 +401,8 @@ void test_automode_iteration_events(const std::string& executable) {
   const auto unknown = autohand::sdk_event_from_notification(
       "autohand.futureNotification", R"({"value":1})");
   assert(unknown.type == "futureNotification");
+  assert(unknown.method == "autohand.futureNotification");
+  assert(unknown.raw_json == R"({"value":1})");
   assert(std::holds_alternative<std::monostate>(unknown.payload));
 
   bool rejected = false;
@@ -531,6 +533,130 @@ void test_post_response_hook_events(const std::string& executable) {
   assert(hook->duration == 225.5);
 }
 
+void test_remaining_hook_events(const std::string& executable) {
+  const std::string notifications =
+      R"({"jsonrpc":"2.0","method":"autohand.hook.fileModified","params":{"filePath":"src/sdk.cpp","changeType":"modify","toolId":"tool-1","timestamp":"2026-07-21T00:07:00Z"}})" "\n"
+      R"({"jsonrpc":"2.0","method":"autohand.hook.sessionError","params":{"error":"Rate limited","code":"RATE_LIMIT","context":{"retryAfter":60},"timestamp":"2026-07-21T00:08:00Z"}})" "\n"
+      R"({"jsonrpc":"2.0","method":"autohand.hook.stop","params":{"tokensUsed":700,"tokensUsageStatus":"unavailable","toolCallsCount":3,"duration":300.5,"timestamp":"2026-07-21T00:09:00Z"}})" "\n"
+      R"({"jsonrpc":"2.0","method":"autohand.hook.sessionStart","params":{"sessionType":"resume","timestamp":"2026-07-21T00:10:00Z"}})" "\n"
+      R"({"jsonrpc":"2.0","method":"autohand.hook.sessionEnd","params":{"reason":"clear","duration":450.5,"timestamp":"2026-07-21T00:11:00Z"}})" "\n"
+      R"({"jsonrpc":"2.0","method":"autohand.hook.subagentStop","params":{"subagentId":"sub-1","subagentName":"reviewer","subagentType":"code-review","success":false,"duration":75.5,"error":"Review failed","timestamp":"2026-07-21T00:12:00Z"}})" "\n"
+      R"({"jsonrpc":"2.0","method":"autohand.hook.permissionRequest","params":{"tool":"write_file","path":"README.md","command":"write README.md","args":{"content":"updated"},"timestamp":"2026-07-21T00:13:00Z"}})" "\n"
+      R"({"jsonrpc":"2.0","method":"autohand.hook.notification","params":{"notificationType":"warning","message":"Context is nearly full","timestamp":"2026-07-21T00:14:00Z"}})" "\n"
+      R"({"jsonrpc":"2.0","method":"autohand.hook.contextCompacted","params":{"croppedCount":4,"summary":"Earlier turns summarized","usagePercent":0.6125,"reason":"threshold","timestamp":"2026-07-21T00:15:00Z"}})" "\n"
+      R"({"jsonrpc":"2.0","method":"autohand.hook.contextOverflow","params":{"tokensBefore":120000,"tokensAfter":80000,"croppedCount":6,"usagePercent":1.05,"timestamp":"2026-07-21T00:16:00Z"}})" "\n"
+      R"({"jsonrpc":"2.0","method":"autohand.hook.contextWarning","params":{"usagePercent":0.805,"remainingTokens":12000,"timestamp":"2026-07-21T00:17:00Z"}})" "\n"
+      R"({"jsonrpc":"2.0","method":"autohand.hook.contextCritical","params":{"usagePercent":0.9575,"remainingTokens":3000,"timestamp":"2026-07-21T00:18:00Z"}})";
+  Fixture fixture(executable, "remaining-hook-events", "{}", notifications);
+  std::vector<autohand::SdkEvent> events;
+  fixture.sdk.stream_prompt("continue", [&](const auto& event) { events.push_back(event); });
+  assert(events.size() == 12);
+
+  const auto* file = std::get_if<autohand::FileModifiedHookEvent>(&events[0].payload);
+  assert(events[0].type == "file_modified");
+  assert(file != nullptr && file->file_path == "src/sdk.cpp");
+  assert(file->change_type == autohand::HookFileChangeType::Modify);
+  const auto* session_error =
+      std::get_if<autohand::SessionErrorHookEvent>(&events[1].payload);
+  assert(session_error != nullptr && session_error->code == "RATE_LIMIT");
+  assert(session_error->context_json == R"({"retryAfter":60})");
+  const auto* stop = std::get_if<autohand::StopHookEvent>(&events[2].payload);
+  assert(stop != nullptr && stop->tokens_usage_status == autohand::TokensUsageStatus::Unavailable);
+  assert(stop->duration == 300.5);
+  const auto* start = std::get_if<autohand::SessionStartHookEvent>(&events[3].payload);
+  assert(start != nullptr && start->session_type == autohand::HookSessionType::Resume);
+  const auto* end = std::get_if<autohand::SessionEndHookEvent>(&events[4].payload);
+  assert(end != nullptr && end->reason == autohand::HookSessionEndReason::Clear);
+  const auto* subagent = std::get_if<autohand::SubagentStopHookEvent>(&events[5].payload);
+  assert(subagent != nullptr && subagent->error == "Review failed");
+  const auto* permission =
+      std::get_if<autohand::PermissionRequestHookEvent>(&events[6].payload);
+  assert(permission != nullptr && permission->args_json == R"({"content":"updated"})");
+  const auto* notification =
+      std::get_if<autohand::NotificationHookEvent>(&events[7].payload);
+  assert(notification != nullptr && notification->message == "Context is nearly full");
+  const auto* compacted =
+      std::get_if<autohand::ContextCompactedHookEvent>(&events[8].payload);
+  assert(compacted != nullptr && compacted->usage_percent == 0.6125);
+  assert(compacted->summary == "Earlier turns summarized");
+  const auto* overflow =
+      std::get_if<autohand::ContextOverflowHookEvent>(&events[9].payload);
+  assert(overflow != nullptr && overflow->tokens_before == 120000);
+  assert(overflow->usage_percent == 1.05);
+  const auto* warning =
+      std::get_if<autohand::ContextWarningHookEvent>(&events[10].payload);
+  assert(warning != nullptr && warning->usage_percent == 0.805);
+  const auto* critical =
+      std::get_if<autohand::ContextCriticalHookEvent>(&events[11].payload);
+  assert(critical != nullptr && critical->usage_percent == 0.9575);
+}
+
+void test_malformed_known_hook_fallbacks(const std::string& executable) {
+  const std::string notifications =
+      R"({"jsonrpc":"2.0","method":"autohand.hook.preTool","params":{"toolId":"bad","malformedMarker":"autohand.hook.preTool"}})" "\n"
+      R"({"jsonrpc":"2.0","method":"autohand.hook.postTool","params":{"duration":"bad","malformedMarker":"autohand.hook.postTool"}})" "\n"
+      R"({"jsonrpc":"2.0","method":"autohand.hook.fileModified","params":{"changeType":"rename","malformedMarker":"autohand.hook.fileModified"}})" "\n"
+      R"({"jsonrpc":"2.0","method":"autohand.hook.prePrompt","params":{"mentionedFiles":[42],"malformedMarker":"autohand.hook.prePrompt"}})" "\n"
+      R"({"jsonrpc":"2.0","method":"autohand.hook.postResponse","params":{"tokensUsageStatus":"estimated","malformedMarker":"autohand.hook.postResponse"}})" "\n"
+      R"({"jsonrpc":"2.0","method":"autohand.hook.sessionError","params":{"error":42,"malformedMarker":"autohand.hook.sessionError"}})" "\n"
+      R"({"jsonrpc":"2.0","method":"autohand.hook.stop","params":{"tokensUsageStatus":"estimated","malformedMarker":"autohand.hook.stop"}})" "\n"
+      R"({"jsonrpc":"2.0","method":"autohand.hook.sessionStart","params":{"sessionType":"restart","malformedMarker":"autohand.hook.sessionStart"}})" "\n"
+      R"({"jsonrpc":"2.0","method":"autohand.hook.sessionEnd","params":{"reason":"timeout","malformedMarker":"autohand.hook.sessionEnd"}})" "\n"
+      R"({"jsonrpc":"2.0","method":"autohand.hook.subagentStop","params":{"success":"yes","malformedMarker":"autohand.hook.subagentStop"}})" "\n"
+      R"({"jsonrpc":"2.0","method":"autohand.hook.permissionRequest","params":{"args":[],"malformedMarker":"autohand.hook.permissionRequest"}})" "\n"
+      R"({"jsonrpc":"2.0","method":"autohand.hook.notification","params":{"message":42,"malformedMarker":"autohand.hook.notification"}})" "\n"
+      R"({"jsonrpc":"2.0","method":"autohand.hook.contextCompacted","params":{"croppedCount":-1,"summary":null,"usagePercent":0.6125,"reason":"threshold","timestamp":"2026-07-21T00:15:00Z","malformedMarker":"autohand.hook.contextCompacted"}})" "\n"
+      R"({"jsonrpc":"2.0","method":"autohand.hook.contextOverflow","params":{"tokensBefore":-1,"tokensAfter":80000,"croppedCount":6,"usagePercent":1.05,"timestamp":"2026-07-21T00:16:00Z","malformedMarker":"autohand.hook.contextOverflow"}})" "\n"
+      R"({"jsonrpc":"2.0","method":"autohand.hook.contextWarning","params":{"usagePercent":0.805,"remainingTokens":-1,"timestamp":"2026-07-21T00:17:00Z","malformedMarker":"autohand.hook.contextWarning"}})" "\n"
+      R"({"jsonrpc":"2.0","method":"autohand.hook.contextCritical","params":{"usagePercent":-0.01,"remainingTokens":3000,"timestamp":"2026-07-21T00:18:00Z","malformedMarker":"autohand.hook.contextCritical"}})";
+  Fixture fixture(executable, "malformed-hooks", "{}", notifications);
+  std::vector<autohand::SdkEvent> events;
+  fixture.sdk.stream_prompt("continue", [&](const auto& event) { events.push_back(event); });
+  assert(events.size() == 16);
+  const std::vector<std::string> expected_types = {
+      "hook_pre_tool", "hook_post_tool", "file_modified", "hook_pre_prompt",
+      "hook_post_response", "hook_session_error", "hook_stop", "hook_session_start",
+      "hook_session_end", "hook_subagent_stop", "hook_permission_request",
+      "hook_notification", "hook_context_compacted", "hook_context_overflow",
+      "hook_context_warning", "hook_context_critical"};
+  const std::vector<std::string> expected_methods = {
+      "autohand.hook.preTool", "autohand.hook.postTool", "autohand.hook.fileModified",
+      "autohand.hook.prePrompt", "autohand.hook.postResponse", "autohand.hook.sessionError",
+      "autohand.hook.stop", "autohand.hook.sessionStart", "autohand.hook.sessionEnd",
+      "autohand.hook.subagentStop", "autohand.hook.permissionRequest",
+      "autohand.hook.notification", "autohand.hook.contextCompacted",
+      "autohand.hook.contextOverflow", "autohand.hook.contextWarning",
+      "autohand.hook.contextCritical"};
+  for (std::size_t i = 0; i < events.size(); ++i) {
+    assert(events[i].type == expected_types[i]);
+    assert(events[i].method == expected_methods[i]);
+    assert(std::holds_alternative<std::monostate>(events[i].payload));
+    assert(events[i].raw_json.find("malformedMarker") != std::string::npos);
+  }
+
+  const std::string raw =
+      R"({"usagePercent":-0.01,"remainingTokens":3000,"timestamp":"2026-07-21T00:18:00Z"})";
+  const auto direct = autohand::sdk_event_from_notification(
+      "autohand.hook.contextCritical", raw);
+  assert(direct.method == "autohand.hook.contextCritical");
+  assert(direct.raw_json == raw);
+  assert(std::holds_alternative<std::monostate>(direct.payload));
+
+  const std::vector<std::pair<std::string, std::string>> invalid_integers = {
+      {"autohand.hook.postResponse",
+       R"({"tokensUsed":1.5,"tokensUsageStatus":"actual","toolCallsCount":2,"duration":20.5,"timestamp":"2026-07-21T00:06:00Z"})"},
+      {"autohand.hook.stop",
+       R"({"tokensUsed":700,"tokensUsageStatus":"unavailable","toolCallsCount":1e3,"duration":300.5,"timestamp":"2026-07-21T00:09:00Z"})"},
+      {"autohand.hook.postResponse",
+       R"({"tokensUsed":9223372036854775808,"tokensUsageStatus":"actual","toolCallsCount":2,"duration":20.5,"timestamp":"2026-07-21T00:06:00Z"})"}};
+  for (const auto& [method, params] : invalid_integers) {
+    const auto fallback = autohand::sdk_event_from_notification(method, params);
+    assert(fallback.method == method);
+    assert(fallback.raw_json == params);
+    assert(std::holds_alternative<std::monostate>(fallback.payload));
+  }
+}
+
 void test_mcp_invocation_request_events(const std::string& executable) {
   Fixture fixture(
       executable,
@@ -622,6 +748,8 @@ int main(int argc, char** argv) {
   test_post_tool_hook_events(executable);
   test_pre_prompt_hook_events(executable);
   test_post_response_hook_events(executable);
+  test_remaining_hook_events(executable);
+  test_malformed_known_hook_fallbacks(executable);
   test_mcp_invocation_request_events(executable);
   test_mcp_tools_changed_events(executable);
   test_learning_progress_events(executable);

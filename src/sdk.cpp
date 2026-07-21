@@ -12,6 +12,7 @@
 #include <atomic>
 #include <cerrno>
 #include <cctype>
+#include <cmath>
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
@@ -453,7 +454,14 @@ std::optional<long long> optional_integer_member(const JsonValue& object, const 
     throw SdkError("invalid RPC result: expected number '" + key + "'");
   }
   try {
-    return std::stoll(member->scalar);
+    std::size_t parsed = 0;
+    const auto value = std::stoll(member->scalar, &parsed);
+    if (parsed != member->scalar.size()) {
+      throw SdkError("invalid RPC result: invalid integer '" + key + "'");
+    }
+    return value;
+  } catch (const SdkError&) {
+    throw;
   } catch (const std::exception&) {
     throw SdkError("invalid RPC result: invalid integer '" + key + "'");
   }
@@ -462,7 +470,14 @@ std::optional<long long> optional_integer_member(const JsonValue& object, const 
 long long required_integer_member(const JsonValue& object, const std::string& key) {
   const auto& member = required_member(object, key, JsonKind::number);
   try {
-    return std::stoll(member.scalar);
+    std::size_t parsed = 0;
+    const auto value = std::stoll(member.scalar, &parsed);
+    if (parsed != member.scalar.size()) {
+      throw SdkError("invalid RPC result: invalid integer '" + key + "'");
+    }
+    return value;
+  } catch (const SdkError&) {
+    throw;
   } catch (const std::exception&) {
     throw SdkError("invalid RPC result: invalid integer '" + key + "'");
   }
@@ -1064,6 +1079,9 @@ PostToolHookEvent parse_post_tool_hook_event(const std::string& json) {
   event.tool_name = required_member(root, "toolName", JsonKind::string).scalar;
   event.success = required_member(root, "success", JsonKind::boolean).boolean;
   event.duration = required_double_member(root, "duration");
+  if (!std::isfinite(event.duration)) {
+    throw SdkError("invalid RPC notification: duration must be finite");
+  }
   event.output = optional_string_member(root, "output");
   event.timestamp = required_member(root, "timestamp", JsonKind::string).scalar;
   return event;
@@ -1097,8 +1115,220 @@ PostResponseHookEvent parse_post_response_hook_event(const std::string& json) {
   if (status) event.tokens_usage_status = parse_tokens_usage_status(*status);
   event.tool_calls_count = required_integer_member(root, "toolCallsCount");
   event.duration = required_double_member(root, "duration");
+  if (!std::isfinite(event.duration)) {
+    throw SdkError("invalid RPC notification: duration must be finite");
+  }
   event.timestamp = required_member(root, "timestamp", JsonKind::string).scalar;
   return event;
+}
+
+std::optional<std::string> optional_object_json_member(
+    const JsonValue& object, const std::string& key) {
+  const auto* member = object.member(key);
+  if (!member || member->kind == JsonKind::null_value) return std::nullopt;
+  if (member->kind != JsonKind::object) {
+    throw SdkError("invalid RPC notification: expected object '" + key + "'");
+  }
+  return serialize_json(*member);
+}
+
+long long required_non_negative_integer_member(
+    const JsonValue& object, const std::string& key) {
+  const auto& member = required_member(object, key, JsonKind::number);
+  try {
+    std::size_t parsed = 0;
+    const auto value = std::stoll(member.scalar, &parsed);
+    if (parsed != member.scalar.size() || value < 0) {
+      throw SdkError(
+          "invalid RPC notification: '" + key + "' must be a non-negative integer");
+    }
+    return value;
+  } catch (const SdkError&) {
+    throw;
+  } catch (const std::exception&) {
+    throw SdkError(
+        "invalid RPC notification: '" + key + "' must be a non-negative integer");
+  }
+}
+
+double required_usage_percent(const JsonValue& root) {
+  const auto value = required_double_member(root, "usagePercent");
+  if (!std::isfinite(value) || value < 0) {
+    throw SdkError(
+        "invalid RPC notification: usagePercent must be finite and non-negative");
+  }
+  return value;
+}
+
+HookFileChangeType parse_hook_file_change_type(const std::string& value) {
+  if (value == "create") return HookFileChangeType::Create;
+  if (value == "modify") return HookFileChangeType::Modify;
+  if (value == "delete") return HookFileChangeType::Delete;
+  throw SdkError("invalid RPC notification: unknown file change type '" + value + "'");
+}
+
+FileModifiedHookEvent parse_file_modified_hook_event(const std::string& json) {
+  const auto root = parse_json_document(json);
+  return FileModifiedHookEvent{
+      required_member(root, "filePath", JsonKind::string).scalar,
+      parse_hook_file_change_type(
+          required_member(root, "changeType", JsonKind::string).scalar),
+      required_member(root, "toolId", JsonKind::string).scalar,
+      required_member(root, "timestamp", JsonKind::string).scalar};
+}
+
+SessionErrorHookEvent parse_session_error_hook_event(const std::string& json) {
+  const auto root = parse_json_document(json);
+  return SessionErrorHookEvent{
+      required_member(root, "error", JsonKind::string).scalar,
+      optional_string_member(root, "code"),
+      optional_object_json_member(root, "context"),
+      required_member(root, "timestamp", JsonKind::string).scalar};
+}
+
+StopHookEvent parse_stop_hook_event(const std::string& json) {
+  const auto root = parse_json_document(json);
+  StopHookEvent event;
+  event.tokens_used = required_integer_member(root, "tokensUsed");
+  const auto status = optional_string_member(root, "tokensUsageStatus");
+  if (status) event.tokens_usage_status = parse_tokens_usage_status(*status);
+  event.tool_calls_count = required_integer_member(root, "toolCallsCount");
+  event.duration = required_double_member(root, "duration");
+  if (!std::isfinite(event.duration)) {
+    throw SdkError("invalid RPC notification: duration must be finite");
+  }
+  event.timestamp = required_member(root, "timestamp", JsonKind::string).scalar;
+  return event;
+}
+
+HookSessionType parse_hook_session_type(const std::string& value) {
+  if (value == "startup") return HookSessionType::Startup;
+  if (value == "resume") return HookSessionType::Resume;
+  if (value == "clear") return HookSessionType::Clear;
+  throw SdkError("invalid RPC notification: unknown session type '" + value + "'");
+}
+
+SessionStartHookEvent parse_session_start_hook_event(const std::string& json) {
+  const auto root = parse_json_document(json);
+  return SessionStartHookEvent{
+      parse_hook_session_type(
+          required_member(root, "sessionType", JsonKind::string).scalar),
+      required_member(root, "timestamp", JsonKind::string).scalar};
+}
+
+HookSessionEndReason parse_hook_session_end_reason(const std::string& value) {
+  if (value == "quit") return HookSessionEndReason::Quit;
+  if (value == "clear") return HookSessionEndReason::Clear;
+  if (value == "exit") return HookSessionEndReason::Exit;
+  if (value == "error") return HookSessionEndReason::Error;
+  throw SdkError("invalid RPC notification: unknown session end reason '" + value + "'");
+}
+
+SessionEndHookEvent parse_session_end_hook_event(const std::string& json) {
+  const auto root = parse_json_document(json);
+  const auto duration = required_double_member(root, "duration");
+  if (!std::isfinite(duration)) {
+    throw SdkError("invalid RPC notification: duration must be finite");
+  }
+  return SessionEndHookEvent{
+      parse_hook_session_end_reason(
+          required_member(root, "reason", JsonKind::string).scalar),
+      duration,
+      required_member(root, "timestamp", JsonKind::string).scalar};
+}
+
+SubagentStopHookEvent parse_subagent_stop_hook_event(const std::string& json) {
+  const auto root = parse_json_document(json);
+  const auto duration = required_double_member(root, "duration");
+  if (!std::isfinite(duration)) {
+    throw SdkError("invalid RPC notification: duration must be finite");
+  }
+  return SubagentStopHookEvent{
+      required_member(root, "subagentId", JsonKind::string).scalar,
+      required_member(root, "subagentName", JsonKind::string).scalar,
+      required_member(root, "subagentType", JsonKind::string).scalar,
+      required_member(root, "success", JsonKind::boolean).boolean,
+      duration,
+      optional_string_member(root, "error"),
+      required_member(root, "timestamp", JsonKind::string).scalar};
+}
+
+PermissionRequestHookEvent parse_permission_request_hook_event(
+    const std::string& json) {
+  const auto root = parse_json_document(json);
+  return PermissionRequestHookEvent{
+      required_member(root, "tool", JsonKind::string).scalar,
+      optional_string_member(root, "path"),
+      optional_string_member(root, "command"),
+      optional_object_json_member(root, "args"),
+      required_member(root, "timestamp", JsonKind::string).scalar};
+}
+
+NotificationHookEvent parse_notification_hook_event(const std::string& json) {
+  const auto root = parse_json_document(json);
+  return NotificationHookEvent{
+      required_member(root, "notificationType", JsonKind::string).scalar,
+      required_member(root, "message", JsonKind::string).scalar,
+      required_member(root, "timestamp", JsonKind::string).scalar};
+}
+
+ContextCompactedHookEvent parse_context_compacted_hook_event(
+    const std::string& json) {
+  const auto root = parse_json_document(json);
+  return ContextCompactedHookEvent{
+      required_non_negative_integer_member(root, "croppedCount"),
+      optional_string_member(root, "summary"),
+      required_usage_percent(root),
+      required_member(root, "reason", JsonKind::string).scalar,
+      required_member(root, "timestamp", JsonKind::string).scalar};
+}
+
+ContextOverflowHookEvent parse_context_overflow_hook_event(
+    const std::string& json) {
+  const auto root = parse_json_document(json);
+  return ContextOverflowHookEvent{
+      required_non_negative_integer_member(root, "tokensBefore"),
+      required_non_negative_integer_member(root, "tokensAfter"),
+      required_non_negative_integer_member(root, "croppedCount"),
+      required_usage_percent(root),
+      required_member(root, "timestamp", JsonKind::string).scalar};
+}
+
+ContextWarningHookEvent parse_context_warning_hook_event(
+    const std::string& json) {
+  const auto root = parse_json_document(json);
+  return ContextWarningHookEvent{
+      required_usage_percent(root),
+      required_non_negative_integer_member(root, "remainingTokens"),
+      required_member(root, "timestamp", JsonKind::string).scalar};
+}
+
+ContextCriticalHookEvent parse_context_critical_hook_event(
+    const std::string& json) {
+  const auto root = parse_json_document(json);
+  return ContextCriticalHookEvent{
+      required_usage_percent(root),
+      required_non_negative_integer_member(root, "remainingTokens"),
+      required_member(root, "timestamp", JsonKind::string).scalar};
+}
+
+bool is_known_hook_method(const std::string& method) {
+  return method == "autohand.hook.preTool" ||
+         method == "autohand.hook.postTool" ||
+         method == "autohand.hook.fileModified" ||
+         method == "autohand.hook.prePrompt" ||
+         method == "autohand.hook.postResponse" ||
+         method == "autohand.hook.sessionError" ||
+         method == "autohand.hook.stop" ||
+         method == "autohand.hook.sessionStart" ||
+         method == "autohand.hook.sessionEnd" ||
+         method == "autohand.hook.subagentStop" ||
+         method == "autohand.hook.permissionRequest" ||
+         method == "autohand.hook.notification" ||
+         method == "autohand.hook.contextCompacted" ||
+         method == "autohand.hook.contextOverflow" ||
+         method == "autohand.hook.contextWarning" ||
+         method == "autohand.hook.contextCritical";
 }
 
 McpInvocationRequestEvent parse_mcp_invocation_request_event(const std::string& json) {
@@ -2483,8 +2713,20 @@ std::string event_type_from_method(const std::string& method, const std::string&
   if (method == "autohand.automode.error") return "automode_error";
   if (method == "autohand.hook.preTool") return "hook_pre_tool";
   if (method == "autohand.hook.postTool") return "hook_post_tool";
+  if (method == "autohand.hook.fileModified") return "file_modified";
   if (method == "autohand.hook.prePrompt") return "hook_pre_prompt";
   if (method == "autohand.hook.postResponse") return "hook_post_response";
+  if (method == "autohand.hook.sessionError") return "hook_session_error";
+  if (method == "autohand.hook.stop") return "hook_stop";
+  if (method == "autohand.hook.sessionStart") return "hook_session_start";
+  if (method == "autohand.hook.sessionEnd") return "hook_session_end";
+  if (method == "autohand.hook.subagentStop") return "hook_subagent_stop";
+  if (method == "autohand.hook.permissionRequest") return "hook_permission_request";
+  if (method == "autohand.hook.notification") return "hook_notification";
+  if (method == "autohand.hook.contextCompacted") return "hook_context_compacted";
+  if (method == "autohand.hook.contextOverflow") return "hook_context_overflow";
+  if (method == "autohand.hook.contextWarning") return "hook_context_warning";
+  if (method == "autohand.hook.contextCritical") return "hook_context_critical";
   if (method == "autohand.mcp.invokeRequest") return "mcp_invoke_request";
   if (method == "autohand.mcp.toolsChanged") return "mcp_tools_changed";
   if (method == "autohand.learn.progress") return "learn_progress";
@@ -2521,25 +2763,94 @@ SdkEvent sdk_event_from_notification(const std::string& method, const std::strin
         "automode_error", normalized_params,
         parse_automode_error_event(normalized_params)};
   }
-  if (method == "autohand.hook.preTool") {
-    return SdkEvent{
-        "hook_pre_tool", normalized_params,
-        parse_pre_tool_hook_event(normalized_params)};
-  }
-  if (method == "autohand.hook.postTool") {
-    return SdkEvent{
-        "hook_post_tool", normalized_params,
-        parse_post_tool_hook_event(normalized_params)};
-  }
-  if (method == "autohand.hook.prePrompt") {
-    return SdkEvent{
-        "hook_pre_prompt", normalized_params,
-        parse_pre_prompt_hook_event(normalized_params)};
-  }
-  if (method == "autohand.hook.postResponse") {
-    return SdkEvent{
-        "hook_post_response", normalized_params,
-        parse_post_response_hook_event(normalized_params)};
+  try {
+    if (method == "autohand.hook.preTool") {
+      return SdkEvent{
+          "hook_pre_tool", normalized_params,
+          parse_pre_tool_hook_event(normalized_params), method};
+    }
+    if (method == "autohand.hook.postTool") {
+      return SdkEvent{
+          "hook_post_tool", normalized_params,
+          parse_post_tool_hook_event(normalized_params), method};
+    }
+    if (method == "autohand.hook.fileModified") {
+      return SdkEvent{
+          "file_modified", normalized_params,
+          parse_file_modified_hook_event(normalized_params), method};
+    }
+    if (method == "autohand.hook.prePrompt") {
+      return SdkEvent{
+          "hook_pre_prompt", normalized_params,
+          parse_pre_prompt_hook_event(normalized_params), method};
+    }
+    if (method == "autohand.hook.postResponse") {
+      return SdkEvent{
+          "hook_post_response", normalized_params,
+          parse_post_response_hook_event(normalized_params), method};
+    }
+    if (method == "autohand.hook.sessionError") {
+      return SdkEvent{
+          "hook_session_error", normalized_params,
+          parse_session_error_hook_event(normalized_params), method};
+    }
+    if (method == "autohand.hook.stop") {
+      return SdkEvent{
+          "hook_stop", normalized_params,
+          parse_stop_hook_event(normalized_params), method};
+    }
+    if (method == "autohand.hook.sessionStart") {
+      return SdkEvent{
+          "hook_session_start", normalized_params,
+          parse_session_start_hook_event(normalized_params), method};
+    }
+    if (method == "autohand.hook.sessionEnd") {
+      return SdkEvent{
+          "hook_session_end", normalized_params,
+          parse_session_end_hook_event(normalized_params), method};
+    }
+    if (method == "autohand.hook.subagentStop") {
+      return SdkEvent{
+          "hook_subagent_stop", normalized_params,
+          parse_subagent_stop_hook_event(normalized_params), method};
+    }
+    if (method == "autohand.hook.permissionRequest") {
+      return SdkEvent{
+          "hook_permission_request", normalized_params,
+          parse_permission_request_hook_event(normalized_params), method};
+    }
+    if (method == "autohand.hook.notification") {
+      return SdkEvent{
+          "hook_notification", normalized_params,
+          parse_notification_hook_event(normalized_params), method};
+    }
+    if (method == "autohand.hook.contextCompacted") {
+      return SdkEvent{
+          "hook_context_compacted", normalized_params,
+          parse_context_compacted_hook_event(normalized_params), method};
+    }
+    if (method == "autohand.hook.contextOverflow") {
+      return SdkEvent{
+          "hook_context_overflow", normalized_params,
+          parse_context_overflow_hook_event(normalized_params), method};
+    }
+    if (method == "autohand.hook.contextWarning") {
+      return SdkEvent{
+          "hook_context_warning", normalized_params,
+          parse_context_warning_hook_event(normalized_params), method};
+    }
+    if (method == "autohand.hook.contextCritical") {
+      return SdkEvent{
+          "hook_context_critical", normalized_params,
+          parse_context_critical_hook_event(normalized_params), method};
+    }
+  } catch (const SdkError&) {
+    if (is_known_hook_method(method)) {
+      return SdkEvent{
+          event_type_from_method(method, normalized_params), normalized_params,
+          std::monostate{}, method};
+    }
+    throw;
   }
   if (method == "autohand.mcp.invokeRequest") {
     return SdkEvent{
@@ -2557,7 +2868,8 @@ SdkEvent sdk_event_from_notification(const std::string& method, const std::strin
         parse_learning_progress_event(normalized_params)};
   }
   return SdkEvent{
-      event_type_from_method(method, normalized_params), normalized_params, std::monostate{}};
+      event_type_from_method(method, normalized_params), normalized_params,
+      std::monostate{}, method};
 }
 
 }  // namespace autohand

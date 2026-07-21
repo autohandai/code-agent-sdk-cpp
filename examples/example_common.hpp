@@ -27,6 +27,13 @@ inline void print_event(autohand::AutohandSdk* sdk, const autohand::SdkEvent& ev
     if (sdk != nullptr && !event.request_id().empty()) {
       sdk->permission_response(event.request_id(), "allow_once");
     }
+  } else if (const auto* warning =
+                 std::get_if<autohand::ContextWarningHookEvent>(&event.payload)) {
+    std::cout << "\n[context warning] " << warning->remaining_tokens
+              << " tokens remain\n";
+  } else if ((event.type.starts_with("hook_") || event.type == "file_modified") &&
+             std::holds_alternative<std::monostate>(event.payload)) {
+    std::cout << "\n[raw hook] " << event.method << ": " << event.raw_json << "\n";
   } else if (event.type == "error") {
     std::cerr << "\n[error] " << event.raw_json << "\n";
   }
@@ -87,4 +94,3 @@ inline int show_control_features() {
 }
 
 }  // namespace examples
-

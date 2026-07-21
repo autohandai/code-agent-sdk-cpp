@@ -30,6 +30,49 @@ concurrent stream clearing or draining them.
 - `autoresearch`: lifecycle and ledger-operation notifications. Inspect
   `raw_json` for `phase`, `operation`, `attemptId`, `success`, and retention data.
 
+## Typed CLI Hook Notifications
+
+The 16 `autohand.hook.*` notifications decode into alternatives of
+`SdkEvent::payload`:
+
+| RPC method | `event.type` | Payload alternative |
+| --- | --- | --- |
+| `autohand.hook.preTool` | `hook_pre_tool` | `PreToolHookEvent` |
+| `autohand.hook.postTool` | `hook_post_tool` | `PostToolHookEvent` |
+| `autohand.hook.fileModified` | `file_modified` | `FileModifiedHookEvent` |
+| `autohand.hook.prePrompt` | `hook_pre_prompt` | `PrePromptHookEvent` |
+| `autohand.hook.postResponse` | `hook_post_response` | `PostResponseHookEvent` |
+| `autohand.hook.sessionError` | `hook_session_error` | `SessionErrorHookEvent` |
+| `autohand.hook.stop` | `hook_stop` | `StopHookEvent` |
+| `autohand.hook.sessionStart` | `hook_session_start` | `SessionStartHookEvent` |
+| `autohand.hook.sessionEnd` | `hook_session_end` | `SessionEndHookEvent` |
+| `autohand.hook.subagentStop` | `hook_subagent_stop` | `SubagentStopHookEvent` |
+| `autohand.hook.permissionRequest` | `hook_permission_request` | `PermissionRequestHookEvent` |
+| `autohand.hook.notification` | `hook_notification` | `NotificationHookEvent` |
+| `autohand.hook.contextCompacted` | `hook_context_compacted` | `ContextCompactedHookEvent` |
+| `autohand.hook.contextOverflow` | `hook_context_overflow` | `ContextOverflowHookEvent` |
+| `autohand.hook.contextWarning` | `hook_context_warning` | `ContextWarningHookEvent` |
+| `autohand.hook.contextCritical` | `hook_context_critical` | `ContextCriticalHookEvent` |
+
+Use `std::get_if` to select a typed payload:
+
+```cpp
+if (const auto* warning =
+        std::get_if<autohand::ContextWarningHookEvent>(&event.payload)) {
+  std::cout << warning->remaining_tokens << " tokens remain\n";
+}
+```
+
+Unknown notification methods and recognized hooks whose payload fails
+validation remain observable. `event.method` retains the RPC method,
+`event.raw_json` retains the exact top-level params value, and `event.payload`
+is `std::monostate`.
+
+Context counts (`cropped_count`, `tokens_before`, `tokens_after`, and
+`remaining_tokens`) must be non-negative integers representable by
+`long long`. Fractions, negative values, or values outside that range use the
+raw fallback. `usage_percent` must be finite and non-negative.
+
 ## Handling Permissions While Streaming
 
 ```cpp

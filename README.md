@@ -22,6 +22,7 @@ Use it when you want Autohand inside native developer tools, editors, desktop ap
 - CMake target: `autohand::sdk`
 - CLI subprocess transport over JSON-RPC 2.0
 - Typed event helpers for message deltas, tools, permissions, and errors
+- Typed decoding for all 16 CLI hook notifications, with exact raw fallback for unknown or malformed payloads
 - High-level `Agent` and `Run` workflow
 - Low-level `AutohandSdk` control methods
 - Slash-command helpers, persistent goals, and the replayable autoresearch ledger

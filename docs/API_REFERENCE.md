@@ -175,6 +175,10 @@ Event types include:
 - `permission_request`
 - `error`
 
+All 16 `autohand.hook.*` notifications also have typed `SdkEventPayload`
+alternatives. See [Event Streaming](event-streaming.md#typed-cli-hook-notifications)
+for the method/type mapping, raw fallback contract, and integer range rules.
+
 ## Structured JSON
 
 ```cpp
