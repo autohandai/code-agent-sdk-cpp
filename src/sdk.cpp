@@ -1747,6 +1747,9 @@ class AutohandSdk::Impl {
       for (const auto& [key, value] : config_.environment) {
         setenv(key.c_str(), value.c_str(), 1);
       }
+      if (config_.provider && setenv("AUTOHAND_PROVIDER", config_.provider->c_str(), 1) != 0) {
+        child_fail(errno);
+      }
       std::vector<char*> argv;
       argv.reserve(args.size() + 1);
       for (const auto& arg : args) {

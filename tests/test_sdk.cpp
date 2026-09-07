@@ -44,7 +44,7 @@ while IFS= read -r line; do
       printf '{"jsonrpc":"2.0","id":%s,"result":{"commands":["deep-research","/autoresearch"]}}\n' "$id"
       ;;
     *autohand.env*)
-      printf '{"jsonrpc":"2.0","id":%s,"result":{"plan":"%s","apiKey":"%s","baseUrl":"%s"}}\n' "$id" "$AUTOHAND_AI_PLAN" "$AUTOHAND_AI_API_KEY" "$AUTOHAND_AI_BASE_URL"
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"provider":"%s","plan":"%s","apiKey":"%s","baseUrl":"%s"}}\n' "$id" "$AUTOHAND_PROVIDER" "$AUTOHAND_AI_PLAN" "$AUTOHAND_AI_API_KEY" "$AUTOHAND_AI_BASE_URL"
       ;;
     *autohand.reset*)
       printf '{"jsonrpc":"2.0","id":%s,"result":{"sessionId":"reset-session"}}\n' "$id"
@@ -377,6 +377,7 @@ int main(int argc, char** argv) {
   sdk.start();
   assert(sdk.supports_command("/autoresearch"));
   const auto environment = sdk.request("autohand.env");
+  assert(autohand::json_get_string(environment, "provider") == "autohandai");
   assert(autohand::json_get_string(environment, "plan") == "cloud");
   assert(autohand::json_get_string(environment, "apiKey") == "test-key");
   assert(autohand::json_get_string(environment, "baseUrl") == "https://example.test");
