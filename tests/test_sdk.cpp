@@ -38,6 +38,7 @@ while IFS= read -r line; do
       printf '{"jsonrpc":"2.0","id":%s,"result":{"ok":true}}\n' "$permission_id"
       printf '%s\n' '{"jsonrpc":"2.0","method":"autohand.messageUpdate","params":{"type":"message_update","delta":"hello"}}'
       printf '%s\n' '{"jsonrpc":"2.0","method":"autohand.messageEnd","params":{"type":"message_end","content":"hello"}}'
+      printf '%s\n' '{"jsonrpc":"2.0","method":"autohand.turnEnd","params":{"reason":"completed","timestamp":"now"}}'
       printf '{"jsonrpc":"2.0","id":%s,"result":{"ok":true}}\n' "$prompt_id"
       ;;
     *autohand.getSupportedCommands*)
@@ -144,12 +145,16 @@ int run_fixture(std::string_view mode) {
       std::cout << "{\"jsonrpc\":\"2.0\",\"method\":\"autohand.messageUpdate\","
                    "\"params\":{\"type\":\"message_update\",\"delta\":\"stream-"
                 << stream_count << "\"}}\n"
+                << R"({"jsonrpc":"2.0","method":"autohand.turnEnd","params":{"reason":"completed","timestamp":"now"}})" << '\n'
                 << "{\"jsonrpc\":\"2.0\",\"id\":" << id
                 << ",\"result\":{\"ok\":true}}\n"
                 << std::flush;
       continue;
     }
     if (mode == "eof" && method != "autohand.getState") return 0;
+    if (method == "autohand.abort") {
+      std::cout << R"({"jsonrpc":"2.0","method":"autohand.turnEnd","params":{"reason":"aborted","timestamp":"now"}})" << '\n';
+    }
     std::cout << " { \"jsonrpc\" : \"2.0\", \"id\" : " << id
               << ", \"result\" : { \"ready\" : true, \"method\" : \""
               << autohand::json_escape(method) << "\", \"unicode\" : \"\\uD83D\\uDE80\" } } \n"
@@ -578,12 +583,12 @@ int main(int argc, char** argv) {
     std::vector<std::string> second_events;
     std::thread first([&] {
       stream_sdk.stream_prompt("first", [&](const autohand::SdkEvent& event) {
-        first_events.push_back(event.text_delta());
+        if (event.type == "message_update") first_events.push_back(event.text_delta());
       });
     });
     std::thread second([&] {
       stream_sdk.stream_prompt("second", [&](const autohand::SdkEvent& event) {
-        second_events.push_back(event.text_delta());
+        if (event.type == "message_update") second_events.push_back(event.text_delta());
       });
     });
     first.join();

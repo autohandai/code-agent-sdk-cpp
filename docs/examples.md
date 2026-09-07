@@ -28,5 +28,6 @@ Examples:
 - `23-system-prompts.cpp`: appended system instructions.
 - `24-high-level-agent.cpp`: `Agent` and `Run`.
 - `25-structured-json.cpp`: structured JSON output.
+- `28-step-control.cpp`: stop after persisted results, inspect steps, and continue.
 
 Live examples require an authenticated Autohand CLI.

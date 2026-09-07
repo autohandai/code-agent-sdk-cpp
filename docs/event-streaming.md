@@ -12,9 +12,12 @@ sdk.stream_prompt("Explain closures in one sentence.", [](const autohand::SdkEve
 });
 ```
 
-Calls to `stream_prompt()` on the same SDK instance are serialized. Each
+Calls to `prompt()` and `stream_prompt()` on the same SDK instance are serialized. Each
 callback therefore receives the notifications for its own prompt without a
 concurrent stream clearing or draining them.
+Both APIs wait for the terminal event and the RPC response. Acknowledgement
+alone does not complete a prompt. Cancellation or callback failure drains the
+aborted turn before the next prompt starts; failed cleanup stops the CLI.
 
 ## Event Types
 
@@ -23,6 +26,8 @@ concurrent stream clearing or draining them.
 - `tool_start`: a tool started.
 - `tool_update`: streaming tool output.
 - `tool_end`: a tool completed.
+- `step_end`: typed `StepEndEvent` with persisted tool calls and results; see
+  [Step Control](./step-control.md).
 - `permission_request`: host approval is required.
 - `error`: agent or transport error.
 - `turn_end`: includes raw `tokensUsed`, `tokensUsageStatus`, `durationMs`, and

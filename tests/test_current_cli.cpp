@@ -37,6 +37,9 @@ int run_fixture() {
     if (method == "autohand.prompt" && notification && *notification) {
       std::cout << notification << '\n';
     }
+    if (method == "autohand.prompt" || method == "autohand.abort") {
+      std::cout << R"({"jsonrpc":"2.0","method":"autohand.turnEnd","params":{"reason":"completed","timestamp":"now"}})" << '\n';
+    }
     const auto result = method == "autohand.getState"
                             ? std::string("{}")
                             : std::string(configured_result ? configured_result : "{\"success\":true}");
@@ -414,7 +417,8 @@ void test_automode_iteration_events(const std::string& executable) {
       R"({"jsonrpc":"2.0","method":"autohand.automode.iteration","params":{"sessionId":"session-auto","iteration":3,"actions":["read","write"],"tokensUsed":400,"timestamp":"2026-07-21T00:00:00Z"}})");
   std::vector<autohand::SdkEvent> events;
   fixture.sdk.stream_prompt("continue", [&](const auto& event) { events.push_back(event); });
-  assert(events.size() == 1);
+  assert(events.size() == 2);
+  assert(events.back().type == "turn_end");
   assert(events.front().type == "automode_iteration");
   const auto* iteration =
       std::get_if<autohand::AutomodeIterationEvent>(&events.front().payload);
@@ -448,7 +452,8 @@ void test_automode_iteration_events(const std::string& executable) {
   std::vector<autohand::SdkEvent> malformed_events;
   malformed_fixture.sdk.stream_prompt(
       "continue", [&](const auto& event) { malformed_events.push_back(event); });
-  assert(malformed_events.size() == 1);
+  assert(malformed_events.size() == 2);
+  assert(malformed_events.back().type == "turn_end");
   assert(malformed_events.front().type == "error");
   assert(std::holds_alternative<std::monostate>(malformed_events.front().payload));
 }
@@ -461,7 +466,8 @@ void test_automode_completion_events(const std::string& executable) {
       R"({"jsonrpc":"2.0","method":"autohand.automode.complete","params":{"sessionId":"session-auto","iterations":8,"filesCreated":2,"filesModified":5,"timestamp":"2026-07-21T00:01:00Z"}})");
   std::vector<autohand::SdkEvent> events;
   fixture.sdk.stream_prompt("continue", [&](const auto& event) { events.push_back(event); });
-  assert(events.size() == 1);
+  assert(events.size() == 2);
+  assert(events.back().type == "turn_end");
   assert(events.front().type == "automode_complete");
   const auto* complete =
       std::get_if<autohand::AutomodeCompleteEvent>(&events.front().payload);
@@ -480,7 +486,8 @@ void test_automode_error_events(const std::string& executable) {
       R"({"jsonrpc":"2.0","method":"autohand.automode.error","params":{"sessionId":"session-auto","error":"iteration limit reached","timestamp":"2026-07-21T00:02:00Z"}})");
   std::vector<autohand::SdkEvent> events;
   fixture.sdk.stream_prompt("continue", [&](const auto& event) { events.push_back(event); });
-  assert(events.size() == 1);
+  assert(events.size() == 2);
+  assert(events.back().type == "turn_end");
   assert(events.front().type == "automode_error");
   const auto* error = std::get_if<autohand::AutomodeErrorEvent>(&events.front().payload);
   assert(error != nullptr);
@@ -496,7 +503,8 @@ void test_pre_tool_hook_events(const std::string& executable) {
       R"({"jsonrpc":"2.0","method":"autohand.hook.preTool","params":{"toolId":"tool-1","toolName":"read_file","args":{"path":"README.md"},"timestamp":"2026-07-21T00:03:00Z"}})");
   std::vector<autohand::SdkEvent> events;
   fixture.sdk.stream_prompt("continue", [&](const auto& event) { events.push_back(event); });
-  assert(events.size() == 1);
+  assert(events.size() == 2);
+  assert(events.back().type == "turn_end");
   assert(events.front().type == "hook_pre_tool");
   const auto* hook = std::get_if<autohand::PreToolHookEvent>(&events.front().payload);
   assert(hook != nullptr);
@@ -513,7 +521,8 @@ void test_post_tool_hook_events(const std::string& executable) {
       R"({"jsonrpc":"2.0","method":"autohand.hook.postTool","params":{"toolId":"tool-1","toolName":"read_file","success":true,"duration":12.5,"output":"contents","timestamp":"2026-07-21T00:04:00Z"}})");
   std::vector<autohand::SdkEvent> events;
   fixture.sdk.stream_prompt("continue", [&](const auto& event) { events.push_back(event); });
-  assert(events.size() == 1);
+  assert(events.size() == 2);
+  assert(events.back().type == "turn_end");
   assert(events.front().type == "hook_post_tool");
   const auto* hook = std::get_if<autohand::PostToolHookEvent>(&events.front().payload);
   assert(hook != nullptr);
@@ -531,7 +540,8 @@ void test_pre_prompt_hook_events(const std::string& executable) {
       R"({"jsonrpc":"2.0","method":"autohand.hook.prePrompt","params":{"instruction":"Use the SDK contract","mentionedFiles":["README.md","src/sdk.cpp"],"timestamp":"2026-07-21T00:05:00Z"}})");
   std::vector<autohand::SdkEvent> events;
   fixture.sdk.stream_prompt("continue", [&](const auto& event) { events.push_back(event); });
-  assert(events.size() == 1);
+  assert(events.size() == 2);
+  assert(events.back().type == "turn_end");
   assert(events.front().type == "hook_pre_prompt");
   const auto* hook = std::get_if<autohand::PrePromptHookEvent>(&events.front().payload);
   assert(hook != nullptr);
@@ -548,7 +558,8 @@ void test_post_response_hook_events(const std::string& executable) {
       R"({"jsonrpc":"2.0","method":"autohand.hook.postResponse","params":{"tokensUsed":1300,"tokensUsageStatus":"actual","toolCallsCount":4,"duration":225.5,"timestamp":"2026-07-21T00:06:00Z"}})");
   std::vector<autohand::SdkEvent> events;
   fixture.sdk.stream_prompt("continue", [&](const auto& event) { events.push_back(event); });
-  assert(events.size() == 1);
+  assert(events.size() == 2);
+  assert(events.back().type == "turn_end");
   assert(events.front().type == "hook_post_response");
   const auto* hook =
       std::get_if<autohand::PostResponseHookEvent>(&events.front().payload);
@@ -576,7 +587,8 @@ void test_remaining_hook_events(const std::string& executable) {
   Fixture fixture(executable, "remaining-hook-events", "{}", notifications);
   std::vector<autohand::SdkEvent> events;
   fixture.sdk.stream_prompt("continue", [&](const auto& event) { events.push_back(event); });
-  assert(events.size() == 12);
+  assert(events.size() == 13);
+  assert(events.back().type == "turn_end");
 
   const auto* file = std::get_if<autohand::FileModifiedHookEvent>(&events[0].payload);
   assert(events[0].type == "file_modified");
@@ -638,7 +650,8 @@ void test_malformed_known_hook_fallbacks(const std::string& executable) {
   Fixture fixture(executable, "malformed-hooks", "{}", notifications);
   std::vector<autohand::SdkEvent> events;
   fixture.sdk.stream_prompt("continue", [&](const auto& event) { events.push_back(event); });
-  assert(events.size() == 16);
+  assert(events.size() == 17);
+  assert(events.back().type == "turn_end");
   const std::vector<std::string> expected_types = {
       "hook_pre_tool", "hook_post_tool", "file_modified", "hook_pre_prompt",
       "hook_post_response", "hook_session_error", "hook_stop", "hook_session_start",
@@ -653,7 +666,7 @@ void test_malformed_known_hook_fallbacks(const std::string& executable) {
       "autohand.hook.notification", "autohand.hook.contextCompacted",
       "autohand.hook.contextOverflow", "autohand.hook.contextWarning",
       "autohand.hook.contextCritical"};
-  for (std::size_t i = 0; i < events.size(); ++i) {
+  for (std::size_t i = 0; i < expected_types.size(); ++i) {
     assert(events[i].type == expected_types[i]);
     assert(events[i].method == expected_methods[i]);
     assert(std::holds_alternative<std::monostate>(events[i].payload));
@@ -691,7 +704,8 @@ void test_mcp_invocation_request_events(const std::string& executable) {
       R"({"jsonrpc":"2.0","method":"autohand.mcp.invokeRequest","params":{"requestId":"invoke-4","toolName":"workspace.read","args":{"path":"README.md"},"timestamp":"2026-07-21T00:07:00Z"}})");
   std::vector<autohand::SdkEvent> events;
   fixture.sdk.stream_prompt("continue", [&](const auto& event) { events.push_back(event); });
-  assert(events.size() == 1);
+  assert(events.size() == 2);
+  assert(events.back().type == "turn_end");
   assert(events.front().type == "mcp_invoke_request");
   const auto* request =
       std::get_if<autohand::McpInvocationRequestEvent>(&events.front().payload);
@@ -709,7 +723,8 @@ void test_mcp_tools_changed_events(const std::string& executable) {
       R"({"jsonrpc":"2.0","method":"autohand.mcp.toolsChanged","params":{"tools":[{"name":"workspace.read","description":"Read a file","serverName":"vscode"}],"timestamp":"2026-07-21T00:08:00Z"}})");
   std::vector<autohand::SdkEvent> events;
   fixture.sdk.stream_prompt("continue", [&](const auto& event) { events.push_back(event); });
-  assert(events.size() == 1);
+  assert(events.size() == 2);
+  assert(events.back().type == "turn_end");
   assert(events.front().type == "mcp_tools_changed");
   const auto* changed =
       std::get_if<autohand::McpToolsChangedEvent>(&events.front().payload);
@@ -727,7 +742,8 @@ void test_learning_progress_events(const std::string& executable) {
       R"({"jsonrpc":"2.0","method":"autohand.learn.progress","params":{"status":"loading-registry","timestamp":"2026-07-21T00:09:00Z"}})");
   std::vector<autohand::SdkEvent> events;
   fixture.sdk.stream_prompt("continue", [&](const auto& event) { events.push_back(event); });
-  assert(events.size() == 1);
+  assert(events.size() == 2);
+  assert(events.back().type == "turn_end");
   assert(events.front().type == "learn_progress");
   const auto* progress =
       std::get_if<autohand::LearningProgressEvent>(&events.front().payload);

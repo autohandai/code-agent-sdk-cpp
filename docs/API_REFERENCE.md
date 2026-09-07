@@ -149,7 +149,13 @@ Represents a single agent run.
 - `stream(on_event)`: stream events and record final text.
 - `wait()`: wait until the run finishes and collect text/events.
 - `json_text()`: parse final output as JSON text.
-- `abort()`: interrupt the current run.
+- `abort()`: request cancellation of this run; use `wait()` to observe completion.
+
+`PromptOptions::stop_when` accepts host-side `StopCondition` functions returning
+`bool` or `std::shared_future<bool>`. Helpers `is_step_count(n)` and
+`has_tool_call(name)` cover common conditions. `RunResult::steps` contains typed
+persisted tool steps and `status` becomes `stopped` after a stop condition.
+See [Step Control](./step-control.md) for cancellation and continuation semantics.
 
 ## `autohand::SdkEvent`
 

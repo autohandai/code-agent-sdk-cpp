@@ -23,6 +23,7 @@
 #include <iostream>
 #include <limits>
 #include <mutex>
+#include <set>
 #include <sstream>
 #include <thread>
 #include <utility>
@@ -1605,8 +1606,10 @@ std::string PromptOptions::to_json(std::string_view message) const {
     out << ",\"thinkingLevel\":\"" << json_escape(*thinking_level) << "\"";
   }
   for (const auto& [key, value] : extra_json) {
+    if (key == "stopWhen" && !stop_when.empty()) continue;
     out << ",\"" << json_escape(key) << "\":" << value;
   }
+  if (!stop_when.empty()) out << ",\"stopWhen\":{\"mode\":\"host\"}";
   out << "}";
   return out.str();
 }
@@ -1685,6 +1688,104 @@ std::string SdkEvent::request_id() const {
 std::string SdkEvent::description() const { return json_get_string(raw_json, "description"); }
 std::string SdkEvent::autoresearch_phase() const { return json_get_string(raw_json, "phase"); }
 std::string SdkEvent::autoresearch_operation() const { return json_get_string(raw_json, "operation"); }
+
+StopCondition is_step_count(int count) {
+  if (count < 1) throw SdkError("step count must be positive");
+  return [count](const StopConditionContext& context, CancellationToken) {
+    return context.steps.size() >= static_cast<std::size_t>(count);
+  };
+}
+
+StopCondition has_tool_call(std::string tool_name) {
+  const auto first = tool_name.find_first_not_of(" \t\r\n");
+  const auto last = tool_name.find_last_not_of(" \t\r\n");
+  tool_name = first == std::string::npos ? std::string{} : tool_name.substr(first, last - first + 1);
+  if (tool_name.empty()) throw SdkError("tool name must not be empty");
+  return [tool_name = std::move(tool_name)](const StopConditionContext& context, CancellationToken) {
+    if (context.steps.empty()) return false;
+    const auto& calls = context.steps.back().tool_calls;
+    return std::any_of(calls.begin(), calls.end(), [&](const auto& call) { return call.tool == tool_name; });
+  };
+}
+
+namespace {
+
+class PromptCancelled : public SdkError {
+ public:
+  PromptCancelled() : SdkError("prompt cancelled") {}
+};
+
+void check_cancelled(CancellationToken cancellation) {
+  if (cancellation.stop_requested()) throw PromptCancelled();
+}
+
+bool terminal_event(const SdkEvent& event) {
+  return event.type == "turn_end" || event.type == "agent_end";
+}
+
+StepEndEvent parse_step_end(const std::string& json) {
+  const auto root = parse_json_document(json);
+  const auto& value = required_member(root, "step", JsonKind::object);
+  const auto number = required_integer_member(value, "stepNumber");
+  if (number < 1 || number > std::numeric_limits<int>::max()) throw SdkError("invalid step number");
+  const auto optional_text = [](const JsonValue& object, const std::string& key) -> std::optional<std::string> {
+    if (!object.member(key)) return std::nullopt;
+    return required_member(object, key, JsonKind::string).scalar;
+  };
+  AgentStep step{static_cast<int>(number), optional_text(value, "thought")};
+  for (const auto& call : required_member(value, "toolCalls", JsonKind::array).array) {
+    step.tool_calls.push_back({optional_text(call, "id"), required_member(call, "tool", JsonKind::string).scalar,
+        serialize_json(required_member(call, "args", JsonKind::object))});
+  }
+  for (const auto& result : required_member(value, "toolResults", JsonKind::array).array) {
+    step.tool_results.push_back({required_member(result, "tool", JsonKind::string).scalar,
+        required_member(result, "success", JsonKind::boolean).boolean,
+        optional_text(result, "output"), optional_text(result, "error")});
+  }
+  return {required_member(root, "stepId", JsonKind::string).scalar, std::move(step),
+      required_member(root, "timestamp", JsonKind::string).scalar};
+}
+
+struct PendingStep {
+  std::string id;
+  std::vector<std::future<bool>> decisions;
+  bool stop = false;
+  std::exception_ptr failure;
+
+  bool ready() {
+    bool pending = false;
+    for (auto& decision : decisions) {
+      if (!decision.valid()) continue;
+      if (decision.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
+        pending = true;
+        continue;
+      }
+      try { stop = decision.get() || stop; }
+      catch (...) { failure = std::current_exception(); }
+    }
+    return failure || !pending;
+  }
+};
+
+PendingStep evaluate_step(const StepEndEvent& step, const std::vector<AgentStep>& steps,
+    const std::vector<StopCondition>& conditions, CancellationToken cancellation) {
+  PendingStep pending{step.step_id};
+  const auto context = std::make_shared<const StopConditionContext>(StopConditionContext{steps});
+  for (const auto& condition : conditions) {
+    std::promise<bool> result;
+    pending.decisions.push_back(result.get_future());
+    std::thread([condition, context, cancellation, result = std::move(result)]() mutable {
+      try {
+        auto decision = condition(*context, cancellation);
+        result.set_value(std::holds_alternative<bool>(decision) ? std::get<bool>(decision)
+            : std::get<std::shared_future<bool>>(decision).get());
+      } catch (...) { result.set_exception(std::current_exception()); }
+    }).detach();
+  }
+  return pending;
+}
+
+}  // namespace
 
 class AutohandSdk::Impl {
  public:
@@ -1871,7 +1972,14 @@ class AutohandSdk::Impl {
 
   bool is_started() const { return started_; }
 
-  std::string request(const std::string& method, const std::string& params_json) {
+  struct PendingRequest {
+    long id;
+    std::future<std::string> response;
+  };
+
+  PendingRequest begin_request(const std::string& method, const std::string& params_json,
+      CancellationToken cancellation = {}) {
+    check_cancelled(cancellation);
     if (!started_) throw SdkError("transport has not been started");
     const auto id = next_id_++;
     auto promise = std::make_shared<std::promise<std::string>>();
@@ -1887,6 +1995,7 @@ class AutohandSdk::Impl {
     const auto line = payload.str();
     try {
       std::lock_guard lock(write_mutex_);
+      check_cancelled(cancellation);
       std::size_t written = 0;
       while (written < line.size()) {
         const auto count = send_without_sigpipe(stdin_fd_, line.data() + written, line.size() - written);
@@ -1903,12 +2012,120 @@ class AutohandSdk::Impl {
       throw;
     }
 
-    if (future.wait_for(config_.timeout) == std::future_status::timeout) {
-      std::lock_guard lock(pending_mutex_);
-      pending_.erase(id);
-      throw RequestTimeoutError(method);
+    return {id, std::move(future)};
+  }
+
+  void discard_request(long id) {
+    std::lock_guard lock(pending_mutex_);
+    pending_.erase(id);
+  }
+
+  std::string await_request(PendingRequest& call, const std::string& method,
+      CancellationToken cancellation, std::chrono::milliseconds timeout) {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    try {
+      while (call.response.wait_for(std::chrono::milliseconds(10)) != std::future_status::ready) {
+        check_cancelled(cancellation);
+        if (std::chrono::steady_clock::now() >= deadline) throw RequestTimeoutError(method);
+      }
+      check_cancelled(cancellation);
+      return call.response.get();
+    } catch (...) {
+      discard_request(call.id);
+      throw;
     }
-    return future.get();
+  }
+
+  std::string request(const std::string& method, const std::string& params_json,
+      CancellationToken cancellation = {}, std::optional<std::chrono::milliseconds> timeout = {}) {
+    auto call = begin_request(method, params_json, cancellation);
+    return await_request(call, method, cancellation, timeout.value_or(config_.timeout));
+  }
+
+  std::string execute_prompt(const std::string& message,
+      const std::function<void(const SdkEvent&)>& on_event,
+      const PromptOptions& options, CancellationToken cancellation) {
+    for (const auto& condition : options.stop_when) {
+      if (!condition) throw SdkError("stop conditions must not be empty functions");
+    }
+    std::unique_lock guard(stream_mutex_, std::defer_lock);
+    while (!guard.try_lock_for(std::chrono::milliseconds(10))) check_cancelled(cancellation);
+    check_cancelled(cancellation);
+    clear_events();
+    const auto predicates = std::make_shared<std::atomic<bool>>(false);
+    auto prompt = begin_request("autohand.prompt", options.to_json(message), cancellation);
+    bool terminal = false;
+    bool acknowledged = false;
+    std::string response;
+    std::vector<AgentStep> steps;
+    std::set<std::string> seen_steps;
+    std::optional<PendingStep> pending_step;
+    std::exception_ptr failure;
+    std::exception_ptr condition_failure;
+    auto progress = std::chrono::steady_clock::now();
+    try {
+      while (!terminal) {
+        check_cancelled(cancellation);
+        if (!acknowledged && prompt.response.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+          response = prompt.response.get();
+          acknowledged = true;
+          progress = std::chrono::steady_clock::now();
+        }
+        for (const auto& event : drain_events()) {
+          progress = std::chrono::steady_clock::now();
+          terminal = terminal || terminal_event(event);
+          if (event.method == "autohand.stepEnd" && !std::holds_alternative<StepEndEvent>(event.payload))
+            throw SdkError("malformed autohand.stepEnd notification");
+          if (const auto* step = std::get_if<StepEndEvent>(&event.payload); step && !failure) {
+            if (!seen_steps.insert(step->step_id).second) continue;
+            if (pending_step) throw SdkError("received another step before the pending step decision");
+            steps.push_back(step->step);
+            pending_step = evaluate_step(*step, steps, options.stop_when, CancellationToken(predicates));
+          }
+          if (!failure) {
+            try { on_event(event); }
+            catch (...) { failure = std::current_exception(); }
+          }
+        }
+        if (failure) std::rethrow_exception(failure);
+        if (terminal) break;
+        if (pending_step && pending_step->ready()) {
+          const auto result = parse_json_document(request("autohand.stepDecision",
+              "{\"stepId\":\"" + json_escape(pending_step->id) + "\",\"stop\":"
+                  + (pending_step->stop || pending_step->failure ? "true}" : "false}"), cancellation));
+          if (!required_member(result, "success", JsonKind::boolean).boolean)
+            throw SdkError("rejected autohand.stepDecision result");
+          condition_failure = pending_step->failure;
+          pending_step.reset();
+          progress = std::chrono::steady_clock::now();
+        }
+        if (!is_started()) throw SdkError("CLI event stream closed before prompt completion");
+        if (std::chrono::steady_clock::now() - progress >= config_.timeout) throw RequestTimeoutError("autohand.prompt");
+        wait_for_event(std::chrono::milliseconds(10));
+      }
+      if (!acknowledged) response = await_request(prompt, "autohand.prompt", cancellation, config_.timeout);
+      if (condition_failure) std::rethrow_exception(condition_failure);
+    } catch (...) {
+      const auto original = std::current_exception();
+      predicates->store(true);
+      discard_request(prompt.id);
+      if (!terminal && is_started()) {
+        try {
+          (void)request("autohand.abort", "{}", {}, std::chrono::seconds(5));
+          const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+          while (!terminal) {
+            for (const auto& event : drain_events()) terminal = terminal || terminal_event(event);
+            if (terminal) break;
+            if (!is_started() || std::chrono::steady_clock::now() >= deadline)
+              throw SdkError("prompt abort cleanup did not complete");
+            wait_for_event(std::chrono::milliseconds(10));
+          }
+        } catch (...) { stop(); }
+      }
+      std::rethrow_exception(original);
+    }
+    predicates->store(true);
+    return response;
   }
 
   void clear_events() {
@@ -1928,10 +2145,6 @@ class AutohandSdk::Impl {
     if (events_.empty()) {
       event_cv_.wait_for(lock, timeout);
     }
-  }
-
-  std::unique_lock<std::mutex> lock_stream() {
-    return std::unique_lock<std::mutex>(stream_mutex_);
   }
 
  private:
@@ -2055,7 +2268,7 @@ class AutohandSdk::Impl {
   std::thread stderr_thread_;
   std::mutex write_mutex_;
   std::mutex pending_mutex_;
-  std::mutex stream_mutex_;
+  std::timed_mutex stream_mutex_;
   std::mutex event_mutex_;
   std::condition_variable event_cv_;
   std::map<long, std::shared_ptr<std::promise<std::string>>> pending_;
@@ -2074,30 +2287,18 @@ std::string AutohandSdk::request(const std::string& method, const std::string& p
   return impl_->request(method, params_json);
 }
 std::string AutohandSdk::prompt(const std::string& message, const PromptOptions& options) {
-  return request("autohand.prompt", options.to_json(message));
+  return execute_prompt(message, [](const SdkEvent&) {}, options, {});
 }
 void AutohandSdk::stream_prompt(
     const std::string& message,
     const std::function<void(const SdkEvent&)>& on_event,
     const PromptOptions& options) {
-  auto stream_guard = impl_->lock_stream();
-  impl_->clear_events();
-  auto prompt_future = std::async(std::launch::async, [this, &message, &options] {
-    return prompt(message, options);
-  });
-
-  while (prompt_future.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
-    impl_->wait_for_event(std::chrono::milliseconds(25));
-    for (const auto& event : impl_->drain_events()) {
-      on_event(event);
-    }
-  }
-
-  for (const auto& event : impl_->drain_events()) {
-    on_event(event);
-  }
-
-  (void)prompt_future.get();
+  (void)execute_prompt(message, on_event, options, {});
+}
+std::string AutohandSdk::execute_prompt(const std::string& message,
+    const std::function<void(const SdkEvent&)>& on_event,
+    const PromptOptions& options, CancellationToken cancellation) {
+  return impl_->execute_prompt(message, on_event, options, cancellation);
 }
 std::string AutohandSdk::interrupt() { return request("autohand.abort"); }
 std::string AutohandSdk::set_plan_mode(bool enabled) {
@@ -2478,48 +2679,63 @@ ContextCompactResult AutohandSdk::set_context_compact(bool enabled) {
       std::string("{\"enabled\":") + (enabled ? "true}" : "false}")));
 }
 
+class Run::State {
+ public:
+  std::mutex mutex;
+  std::shared_ptr<std::atomic<bool>> cancellation = std::make_shared<std::atomic<bool>>(false);
+  bool streamed = false;
+  std::exception_ptr error;
+  RunResult result;
+};
+
 Run::Run(AutohandSdk& sdk, std::string prompt, PromptOptions options)
-    : sdk_(&sdk), id_(now_id()), prompt_(std::move(prompt)), options_(std::move(options)) {}
+    : sdk_(&sdk), id_(now_id()), prompt_(std::move(prompt)), options_(std::move(options)),
+      state_(std::make_shared<State>()) {}
 
 const std::string& Run::id() const { return id_; }
 
 void Run::stream(const std::function<void(const SdkEvent&)>& on_event) {
-  if (streamed_) {
-    if (stream_error_) std::rethrow_exception(stream_error_);
+  std::lock_guard guard(state_->mutex);
+  if (state_->streamed) {
+    if (state_->error) std::rethrow_exception(state_->error);
     return;
   }
-  streamed_ = true;
-  result_.id = id_;
-  result_.status = "running";
+  state_->streamed = true;
+  auto& result = state_->result;
+  result.id = id_;
+  result.status = "running";
   try {
-    sdk_->stream_prompt(prompt_, [&](const SdkEvent& event) {
-      result_.events.push_back(event);
-      if (event.type == "message_update") result_.text += event.text_delta();
+    (void)sdk_->execute_prompt(prompt_, [&](const SdkEvent& event) {
+      result.events.push_back(event);
+      if (event.type == "message_update") result.text += event.text_delta();
       if (event.type == "message_end") {
         const auto content = event.message_content();
-        if (!content.empty()) result_.text = content;
+        if (!content.empty()) result.text = content;
+      }
+      if (const auto* step = std::get_if<StepEndEvent>(&event.payload)) result.steps.push_back(step->step);
+      if (terminal_event(event)) {
+        const auto reason = json_get_string(event.raw_json, "reason");
+        result.status = reason == "stop_condition" ? "stopped" : reason == "aborted" ? "aborted" : "completed";
       }
       on_event(event);
-    }, options_);
-    result_.status = "completed";
+    }, options_, CancellationToken(state_->cancellation));
+  } catch (const PromptCancelled&) {
+    result.status = "aborted";
   } catch (...) {
-    result_.status = "failed";
-    stream_error_ = std::current_exception();
+    result.status = "failed";
+    state_->error = std::current_exception();
     throw;
   }
 }
 
 RunResult Run::wait() {
-  if (!streamed_) {
-    stream([](const SdkEvent&) {});
-  }
-  if (stream_error_) std::rethrow_exception(stream_error_);
-  return result_;
+  stream([](const SdkEvent&) {});
+  return state_->result;
 }
 
 std::string Run::json_text() { return parse_json_text(wait().text); }
 
-void Run::abort() { (void)sdk_->interrupt(); }
+void Run::abort() { state_->cancellation->store(true); }
 
 Agent::Agent(Config config) : sdk_(std::move(config)) { sdk_.start(); }
 Run Agent::send(std::string prompt, PromptOptions options) {
@@ -2732,6 +2948,7 @@ std::string event_type_from_method(const std::string& method, const std::string&
   if (method == "autohand.agentEnd") return "agent_end";
   if (method == "autohand.turnStart") return "turn_start";
   if (method == "autohand.turnEnd") return "turn_end";
+  if (method == "autohand.stepEnd") return "step_end";
   if (method == "autohand.messageStart") return "message_start";
   if (method == "autohand.messageUpdate") return "message_update";
   if (method == "autohand.messageEnd") return "message_end";
@@ -2769,6 +2986,10 @@ std::string event_type_from_method(const std::string& method, const std::string&
 }
 
 SdkEvent sdk_event_from_notification(const std::string& method, const std::string& params_json) {
+  if (method == "autohand.stepEnd") {
+    try { return SdkEvent{"step_end", params_json, parse_step_end(params_json), method}; }
+    catch (const SdkError&) { return SdkEvent{"step_end", params_json, std::monostate{}, method}; }
+  }
   auto normalized_params = params_json;
   const auto phase = autoresearch_phase_for_method(method);
   if (!phase.empty() && json_get_string(params_json, "phase").empty()) {

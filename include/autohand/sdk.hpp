@@ -1,8 +1,10 @@
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <exception>
 #include <functional>
+#include <future>
 #include <map>
 #include <memory>
 #include <optional>
@@ -10,6 +12,7 @@
 #include <string>
 #include <string_view>
 #include <variant>
+#include <utility>
 #include <vector>
 
 namespace autohand {
@@ -147,11 +150,59 @@ struct AutoresearchStartParams {
   std::string to_json() const;
 };
 
+struct AgentStepToolCall {
+  std::optional<std::string> id;
+  std::string tool;
+  std::string args_json;
+};
+
+struct AgentStepToolResult {
+  std::string tool;
+  bool success;
+  std::optional<std::string> output;
+  std::optional<std::string> error;
+};
+
+// Tool results are persisted by the CLI before a step is reported.
+struct AgentStep {
+  int step_number;
+  std::optional<std::string> thought;
+  std::vector<AgentStepToolCall> tool_calls;
+  std::vector<AgentStepToolResult> tool_results;
+};
+
+struct StopConditionContext {
+  const std::vector<AgentStep> steps;
+};
+
+using StopConditionResult = std::variant<bool, std::shared_future<bool>>;
+// Read-only cancellation state shared with a condition's host worker.
+class CancellationToken {
+ public:
+  CancellationToken() = default;
+  explicit CancellationToken(std::shared_ptr<const std::atomic<bool>> state) : state_(std::move(state)) {}
+  bool stop_requested() const { return state_ && state_->load(); }
+
+ private:
+  std::shared_ptr<const std::atomic<bool>> state_;
+};
+// Predicates run on host workers; they never write to the CLI transport.
+using StopCondition = std::function<StopConditionResult(const StopConditionContext&, CancellationToken)>;
+StopCondition is_step_count(int count);
+StopCondition has_tool_call(std::string tool_name);
+
+struct StepEndEvent {
+  std::string step_id;
+  AgentStep step;
+  std::string timestamp;
+};
+
 struct PromptOptions {
   std::string context_json;
   std::vector<std::string> image_json;
   std::optional<std::string> thinking_level;
   std::map<std::string, std::string> extra_json;
+  std::vector<StopCondition> stop_when;
 
   std::string to_json(std::string_view message) const;
 };
@@ -818,7 +869,8 @@ using SdkEventPayload =
         ContextCriticalHookEvent,
         McpInvocationRequestEvent,
         McpToolsChangedEvent,
-        LearningProgressEvent>;
+        LearningProgressEvent,
+        StepEndEvent>;
 
 struct SdkEvent {
   std::string type;
@@ -840,6 +892,7 @@ struct RunResult {
   std::string status;
   std::string text;
   std::vector<SdkEvent> events;
+  std::vector<AgentStep> steps;
 };
 
 class AutohandSdk {
@@ -936,6 +989,10 @@ class AutohandSdk {
   ContextCompactResult set_context_compact(bool enabled);
 
  private:
+  friend class Run;
+  std::string execute_prompt(const std::string& message,
+      const std::function<void(const SdkEvent&)>& on_event,
+      const PromptOptions& options, CancellationToken cancellation);
   class Impl;
   std::unique_ptr<Impl> impl_;
 };
@@ -955,9 +1012,8 @@ class Run {
   std::string id_;
   std::string prompt_;
   PromptOptions options_;
-  bool streamed_ = false;
-  std::exception_ptr stream_error_;
-  RunResult result_;
+  class State;
+  std::shared_ptr<State> state_;
 };
 
 class Agent {
