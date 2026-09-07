@@ -315,6 +315,19 @@ struct McpServerInfo {
   long long tool_count = 0;
 };
 
+// Effective subagent metadata returned by the running CLI session.
+struct AgentInfo {
+  std::string id;
+  std::string name;
+  std::string description;
+  std::vector<std::string> tools;
+  std::optional<std::string> model;
+  std::optional<std::string> source;
+  std::optional<std::string> extension_id;
+  std::optional<std::string> extension_version;
+  std::optional<std::string> extension_scope;
+};
+
 struct McpListServersResult {
   std::vector<McpServerInfo> servers;
 };
@@ -873,6 +886,7 @@ class AutohandSdk {
   McpListToolsResult list_mcp_tools(const McpListToolsParams& params = {});
   McpGetServerConfigsResult get_mcp_server_configs();
   std::string get_supported_commands();
+  std::vector<AgentInfo> get_supported_agents();
   bool supports_command(const std::string& command);
   void stream_command(
       const std::string& command,

@@ -373,6 +373,32 @@ void test_tools_registry(const std::string& executable) {
   fixture.assert_request("autohand.getToolsRegistry", {});
 }
 
+void test_agent_discovery(const std::string& executable) {
+  Fixture fixture(executable, "agents", R"({"agents":[{"id":"reviewer","name":"reviewer","description":"Review changes","tools":["read_file"],"model":"fantail","source":"extension","extensionId":"example.review","extensionVersion":"1.0.0","extensionScope":"project"}]})");
+  const auto agents = fixture.sdk.get_supported_agents();
+  assert(agents.size() == 1);
+  assert(agents[0].id == "reviewer");
+  assert(agents[0].tools == std::vector<std::string>{"read_file"});
+  assert(agents[0].model == "fantail");
+  assert(agents[0].source == "extension");
+  assert(agents[0].extension_id == "example.review");
+  assert(agents[0].extension_version == "1.0.0");
+  assert(agents[0].extension_scope == "project");
+  fixture.assert_request("autohand.getSupportedAgents", {R"("params":{})"});
+}
+
+void test_invalid_agent_discovery(const std::string& executable) {
+  for (const auto* result : {R"({})", R"({"agents":null})", R"({"agents":[{}]})",
+       R"({"agents":[{"id":"one","name":"one","description":"Agent","tools":[1]}]})",
+       R"({"agents":[{"id":"one","name":"one","description":"Agent","tools":[],"extensionScope":"invalid"}]})"}) {
+    Fixture fixture(executable, "invalid-agents", result);
+    bool rejected = false;
+    try { (void)fixture.sdk.get_supported_agents(); }
+    catch (const autohand::SdkError&) { rejected = true; }
+    assert(rejected);
+  }
+}
+
 void test_context_compaction_control(const std::string& executable) {
   Fixture fixture(executable, "context-compact", R"({"enabled":true})");
   const auto result = fixture.sdk.set_context_compact(true);
@@ -740,6 +766,8 @@ int main(int argc, char** argv) {
   test_project_learning_updates(executable);
   test_skill_generation(executable);
   test_tools_registry(executable);
+  test_agent_discovery(executable);
+  test_invalid_agent_discovery(executable);
   test_context_compaction_control(executable);
   test_automode_iteration_events(executable);
   test_automode_completion_events(executable);

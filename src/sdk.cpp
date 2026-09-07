@@ -988,6 +988,31 @@ std::optional<ToolRegistryScope> parse_tool_registry_scope(const JsonValue& valu
   throw SdkError("invalid RPC result: unknown tool registry scope '" + *scope + "'");
 }
 
+std::vector<AgentInfo> parse_supported_agents(const std::string& json) {
+  const auto root = parse_json_document(json);
+  const auto& agents = required_member(root, "agents", JsonKind::array).array;
+  std::vector<AgentInfo> result;
+  result.reserve(agents.size());
+  for (const auto& value : agents) {
+    AgentInfo agent;
+    agent.id = required_member(value, "id", JsonKind::string).scalar;
+    agent.name = required_member(value, "name", JsonKind::string).scalar;
+    agent.description = required_member(value, "description", JsonKind::string).scalar;
+    required_member(value, "tools", JsonKind::array);
+    agent.tools = string_array_member(value, "tools");
+    agent.model = optional_string_member(value, "model");
+    agent.source = optional_string_member(value, "source");
+    agent.extension_id = optional_string_member(value, "extensionId");
+    agent.extension_version = optional_string_member(value, "extensionVersion");
+    agent.extension_scope = optional_string_member(value, "extensionScope");
+    if (agent.extension_scope && *agent.extension_scope != "user" && *agent.extension_scope != "project") {
+      throw SdkError("invalid RPC result: agent extensionScope must be user or project");
+    }
+    result.push_back(std::move(agent));
+  }
+  return result;
+}
+
 ToolsRegistryResult parse_tools_registry_result(const std::string& json) {
   const auto root = parse_json_document(json);
   ToolsRegistryResult result;
@@ -2140,6 +2165,9 @@ McpGetServerConfigsResult AutohandSdk::get_mcp_server_configs() {
   return parse_mcp_configs_result(request("autohand.mcp.getServerConfigs"));
 }
 std::string AutohandSdk::get_supported_commands() { return request("autohand.getSupportedCommands"); }
+std::vector<AgentInfo> AutohandSdk::get_supported_agents() {
+  return parse_supported_agents(request("autohand.getSupportedAgents"));
+}
 bool AutohandSdk::supports_command(const std::string& command) {
   const auto normalized = format_slash_command(command);
   const auto plain = normalized.substr(1);
