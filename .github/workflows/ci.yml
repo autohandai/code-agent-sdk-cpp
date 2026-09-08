@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: C++ build and test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Configure SDK, tests, and examples
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DAUTOHAND_BUILD_TESTS=ON -DAUTOHAND_BUILD_EXAMPLES=ON
+
+      - name: Build
+        run: cmake --build build --parallel 2
+
+      - name: Test SDK
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Stage installable library and headers
+        run: cmake --install build --prefix artifacts
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: code-agent-sdk-cpp-${{ matrix.os }}
+          path: artifacts/
+          if-no-files-found: error

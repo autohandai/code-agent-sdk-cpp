@@ -219,6 +219,10 @@ Live examples require an authenticated Autohand CLI and may ask for tool permiss
 
 ## Development
 
+GitHub CI builds the SDK and every example on Linux and macOS, runs CTest, and
+uploads the installable library and headers. Dependabot checks GitHub Actions
+versions weekly.
+
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DAUTOHAND_BUILD_TESTS=ON -DAUTOHAND_BUILD_EXAMPLES=ON
 cmake --build build
