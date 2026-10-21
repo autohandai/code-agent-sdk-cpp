@@ -1,8 +1,10 @@
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <exception>
 #include <functional>
+#include <future>
 #include <map>
 #include <memory>
 #include <optional>
@@ -10,6 +12,7 @@
 #include <string>
 #include <string_view>
 #include <variant>
+#include <utility>
 #include <vector>
 
 namespace autohand {
@@ -60,6 +63,10 @@ struct Config {
   bool agents_md_create = false;
   std::optional<std::string> agents_md_path;
   bool agents_md_auto_update = false;
+  // Keep this run out of session history and synchronization.
+  bool ephemeral = false;
+  // Legacy compatibility; use ephemeral to disable persistence.
+  // Legacy compatibility field; use ephemeral to disable persistence.
   bool persist_session = false;
   std::optional<std::string> session_id;
   bool resume = false;
@@ -84,6 +91,9 @@ struct Config {
   std::optional<std::string> agents;
   std::optional<std::string> plugin_dir;
   std::optional<std::string> feature_settings_json;
+  // Native CLI provider, feature and session-awareness JSON for this process only.
+  std::optional<std::string> run_settings;
+  std::optional<int> port;
   std::optional<std::string> yolo;
   std::optional<int> yolo_timeout_seconds;
   std::vector<std::string> additional_directories;
@@ -104,6 +114,7 @@ struct Config {
   Config& with_skill(std::string value);
   Config& with_instructions(std::string value);
   std::vector<std::string> cli_args() const;
+  std::optional<std::string> run_settings_json() const;
 };
 
 struct GoalParams {
@@ -147,11 +158,59 @@ struct AutoresearchStartParams {
   std::string to_json() const;
 };
 
+struct AgentStepToolCall {
+  std::optional<std::string> id;
+  std::string tool;
+  std::string args_json;
+};
+
+struct AgentStepToolResult {
+  std::string tool;
+  bool success;
+  std::optional<std::string> output;
+  std::optional<std::string> error;
+};
+
+// Tool results are persisted by the CLI before a step is reported.
+struct AgentStep {
+  int step_number;
+  std::optional<std::string> thought;
+  std::vector<AgentStepToolCall> tool_calls;
+  std::vector<AgentStepToolResult> tool_results;
+};
+
+struct StopConditionContext {
+  const std::vector<AgentStep> steps;
+};
+
+using StopConditionResult = std::variant<bool, std::shared_future<bool>>;
+// Read-only cancellation state shared with a condition's host worker.
+class CancellationToken {
+ public:
+  CancellationToken() = default;
+  explicit CancellationToken(std::shared_ptr<const std::atomic<bool>> state) : state_(std::move(state)) {}
+  bool stop_requested() const { return state_ && state_->load(); }
+
+ private:
+  std::shared_ptr<const std::atomic<bool>> state_;
+};
+// Predicates run on host workers; they never write to the CLI transport.
+using StopCondition = std::function<StopConditionResult(const StopConditionContext&, CancellationToken)>;
+StopCondition is_step_count(int count);
+StopCondition has_tool_call(std::string tool_name);
+
+struct StepEndEvent {
+  std::string step_id;
+  AgentStep step;
+  std::string timestamp;
+};
+
 struct PromptOptions {
   std::string context_json;
   std::vector<std::string> image_json;
   std::optional<std::string> thinking_level;
   std::map<std::string, std::string> extra_json;
+  std::vector<StopCondition> stop_when;
 
   std::string to_json(std::string_view message) const;
 };
@@ -313,6 +372,19 @@ struct McpServerInfo {
   std::string name;
   std::string status;
   long long tool_count = 0;
+};
+
+// Effective subagent metadata returned by the running CLI session.
+struct AgentInfo {
+  std::string id;
+  std::string name;
+  std::string description;
+  std::vector<std::string> tools;
+  std::optional<std::string> model;
+  std::optional<std::string> source;
+  std::optional<std::string> extension_id;
+  std::optional<std::string> extension_version;
+  std::optional<std::string> extension_scope;
 };
 
 struct McpListServersResult {
@@ -805,7 +877,8 @@ using SdkEventPayload =
         ContextCriticalHookEvent,
         McpInvocationRequestEvent,
         McpToolsChangedEvent,
-        LearningProgressEvent>;
+        LearningProgressEvent,
+        StepEndEvent>;
 
 struct SdkEvent {
   std::string type;
@@ -827,6 +900,7 @@ struct RunResult {
   std::string status;
   std::string text;
   std::vector<SdkEvent> events;
+  std::vector<AgentStep> steps;
 };
 
 class AutohandSdk {
@@ -872,7 +946,26 @@ class AutohandSdk {
   McpListServersResult list_mcp_servers();
   McpListToolsResult list_mcp_tools(const McpListToolsParams& params = {});
   McpGetServerConfigsResult get_mcp_server_configs();
+  /// Calls the corresponding ordinary CLI runtime control.
+  std::string set_browser_capabilities(int protocol_version, const std::string& extension_version, const std::vector<std::string>& tools);
+  /// Calls the corresponding ordinary CLI runtime control.
+  std::string set_max_thinking_tokens(std::optional<int> max_thinking_tokens);
+  /// Calls the corresponding ordinary CLI runtime control.
+  std::string get_supported_models();
+  /// Calls the corresponding ordinary CLI runtime control.
+  std::string get_context_usage();
+  /// Calls the corresponding ordinary CLI runtime control.
+  std::string reload_plugins();
+  /// Calls the corresponding ordinary CLI runtime control.
+  std::string get_account_info();
+  /// Calls the corresponding ordinary CLI runtime control.
+  std::string toggle_mcp_server(const std::string& server_name, bool enabled);
+  /// Calls the corresponding ordinary CLI runtime control.
+  std::string reconnect_mcp_server(const std::string& server_name);
+  /// Calls the corresponding ordinary CLI runtime control.
+  std::string set_mcp_servers(const std::string& servers_json);
   std::string get_supported_commands();
+  std::vector<AgentInfo> get_supported_agents();
   bool supports_command(const std::string& command);
   void stream_command(
       const std::string& command,
@@ -922,6 +1015,10 @@ class AutohandSdk {
   ContextCompactResult set_context_compact(bool enabled);
 
  private:
+  friend class Run;
+  std::string execute_prompt(const std::string& message,
+      const std::function<void(const SdkEvent&)>& on_event,
+      const PromptOptions& options, CancellationToken cancellation);
   class Impl;
   std::unique_ptr<Impl> impl_;
 };
@@ -941,9 +1038,8 @@ class Run {
   std::string id_;
   std::string prompt_;
   PromptOptions options_;
-  bool streamed_ = false;
-  std::exception_ptr stream_error_;
-  RunResult result_;
+  class State;
+  std::shared_ptr<State> state_;
 };
 
 class Agent {
@@ -967,6 +1063,15 @@ class Agent {
   std::string queue_goal(const GoalParams& params);
   std::string start_queued_goal();
   std::string list_goal_templates();
+  std::string set_browser_capabilities(int protocol_version, const std::string& extension_version, const std::vector<std::string>& tools);
+  std::string set_max_thinking_tokens(std::optional<int> max_thinking_tokens);
+  std::string get_supported_models();
+  std::string get_context_usage();
+  std::string reload_plugins();
+  std::string get_account_info();
+  std::string toggle_mcp_server(const std::string& server_name, bool enabled);
+  std::string reconnect_mcp_server(const std::string& server_name);
+  std::string set_mcp_servers(const std::string& servers_json);
   ResetResult reset();
   BrowserHandoffCreateResult create_browser_handoff(
       const BrowserHandoffCreateParams& params = {});

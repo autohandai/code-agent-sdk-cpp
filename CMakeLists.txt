@@ -56,8 +56,37 @@ if(AUTOHAND_BUILD_TESTS)
     target_compile_options(autohand_current_cli_tests PRIVATE -UNDEBUG)
   endif()
   add_test(NAME autohand_current_cli_tests COMMAND autohand_current_cli_tests)
+
+  add_executable(autohand_step_control_tests tests/test_step_control.cpp)
+  target_link_libraries(autohand_step_control_tests PRIVATE autohand::sdk)
+  target_compile_options(autohand_step_control_tests PRIVATE -UNDEBUG)
+  add_test(NAME autohand_step_control_tests COMMAND autohand_step_control_tests)
+
+  add_executable(autohand_harness_step_tests tests/test_harness_steps.cpp)
+  target_link_libraries(autohand_harness_step_tests PRIVATE autohand::sdk)
+  target_compile_options(autohand_harness_step_tests PRIVATE -UNDEBUG)
+  find_package(Python3 COMPONENTS Interpreter)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME autohand_harness_step_tests
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/harness_steps.py"
+              "$<TARGET_FILE:autohand_harness_step_tests>")
+  endif()
 endif()
 
 install(TARGETS autohand_sdk EXPORT AutohandSdkTargets)
 install(DIRECTORY include/ DESTINATION include)
 install(EXPORT AutohandSdkTargets NAMESPACE autohand:: DESTINATION lib/cmake/AutohandSdk)
+
+if(AUTOHAND_BUILD_TESTS)
+  add_executable(autohand_current_controls_tests tests/test_current_controls.cpp)
+  target_link_libraries(autohand_current_controls_tests PRIVATE autohand::sdk)
+  target_compile_options(autohand_current_controls_tests PRIVATE -UNDEBUG)
+  add_test(NAME autohand_current_controls_tests COMMAND autohand_current_controls_tests)
+endif()
+
+if(AUTOHAND_BUILD_TESTS)
+  add_executable(autohand_runtime_settings_tests tests/test_runtime_settings.cpp)
+  target_link_libraries(autohand_runtime_settings_tests PRIVATE autohand::sdk)
+  target_compile_options(autohand_runtime_settings_tests PRIVATE -UNDEBUG)
+  add_test(NAME autohand_runtime_settings_tests COMMAND autohand_runtime_settings_tests)
+endif()

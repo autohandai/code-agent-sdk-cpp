@@ -23,6 +23,7 @@
 #include <iostream>
 #include <limits>
 #include <mutex>
+#include <set>
 #include <sstream>
 #include <thread>
 #include <utility>
@@ -196,6 +197,9 @@ class JsonParser {
   }
 
   JsonValue parse_value() {
+    if (depth_ >= 256) fail("maximum JSON nesting depth exceeded");
+    struct DepthGuard { std::size_t& value; ~DepthGuard() { --value; } } guard{depth_};
+    ++depth_;
     skip_whitespace();
     if (position_ >= input_.size()) fail("expected a value");
     switch (input_[position_]) {
@@ -355,6 +359,7 @@ class JsonParser {
 
   std::string_view input_;
   std::size_t position_ = 0;
+  std::size_t depth_ = 0;
 };
 
 JsonValue parse_json_document(std::string_view json) {
@@ -988,6 +993,31 @@ std::optional<ToolRegistryScope> parse_tool_registry_scope(const JsonValue& valu
   throw SdkError("invalid RPC result: unknown tool registry scope '" + *scope + "'");
 }
 
+std::vector<AgentInfo> parse_supported_agents(const std::string& json) {
+  const auto root = parse_json_document(json);
+  const auto& agents = required_member(root, "agents", JsonKind::array).array;
+  std::vector<AgentInfo> result;
+  result.reserve(agents.size());
+  for (const auto& value : agents) {
+    AgentInfo agent;
+    agent.id = required_member(value, "id", JsonKind::string).scalar;
+    agent.name = required_member(value, "name", JsonKind::string).scalar;
+    agent.description = required_member(value, "description", JsonKind::string).scalar;
+    required_member(value, "tools", JsonKind::array);
+    agent.tools = string_array_member(value, "tools");
+    agent.model = optional_string_member(value, "model");
+    agent.source = optional_string_member(value, "source");
+    agent.extension_id = optional_string_member(value, "extensionId");
+    agent.extension_version = optional_string_member(value, "extensionVersion");
+    agent.extension_scope = optional_string_member(value, "extensionScope");
+    if (agent.extension_scope && *agent.extension_scope != "user" && *agent.extension_scope != "project") {
+      throw SdkError("invalid RPC result: agent extensionScope must be user or project");
+    }
+    result.push_back(std::move(agent));
+  }
+  return result;
+}
+
 ToolsRegistryResult parse_tools_registry_result(const std::string& json) {
   const auto root = parse_json_document(json);
   ToolsRegistryResult result;
@@ -1380,6 +1410,33 @@ std::vector<std::string> split_exec_args(const std::string& executable, const st
   return all;
 }
 
+JsonValue json_object() { JsonValue value; value.kind = JsonKind::object; return value; }
+JsonValue json_string(const std::string& text) { JsonValue value; value.kind = JsonKind::string; value.scalar = text; return value; }
+
+void validate_setting_keys(const JsonValue& value) {
+  if (value.kind == JsonKind::object) for (const auto& [key, item] : value.object) {
+    if (key == "__proto__" || key == "constructor" || key == "prototype") throw SdkError("Run settings contain an unsafe setting path");
+    validate_setting_keys(item);
+  }
+  else if (value.kind == JsonKind::array) for (const auto& item : value.array) validate_setting_keys(item);
+}
+void merge_settings(JsonValue& target, const JsonValue& source) {
+  for (const auto& [key, value] : source.object) {
+    auto found = target.object.find(key);
+    if (found != target.object.end() && found->second.kind == JsonKind::object && value.kind == JsonKind::object)
+      merge_settings(found->second, value);
+    else target.object[key] = value;
+  }
+}
+std::string vertex_endpoint(std::string value) {
+  if (value.starts_with("https://")) value.erase(0, 8);
+  else if (value.find("://") != std::string::npos) throw SdkError("Vertex endpoint must be an HTTPS origin or hostname");
+  if (value.ends_with('/')) value.pop_back();
+  if (value.empty() || value.find_first_not_of("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-") != std::string::npos)
+    throw SdkError("Vertex endpoint must be an HTTPS origin or hostname");
+  return value;
+}
+
 ssize_t send_without_sigpipe(int fd, const void* data, std::size_t size) {
 #ifdef MSG_NOSIGNAL
   return send(fd, data, size, MSG_NOSIGNAL);
@@ -1454,17 +1511,25 @@ Config& Config::with_instructions(std::string value) {
   return *this;
 }
 
+static void validate_cli_arguments(const std::vector<std::string>& args) {
+  const std::vector<std::string_view> unsupported{"--agents-md","--no-agents-md","--agents-md-create","--agents-md-auto-update","--agents-md-path","--auto-save-interval","--compression-threshold","--summarization-threshold","--skills","--skill-sources","--install-missing-skills","--permission-mode","--permission-allow-list","--permission-deny-list"};
+  const std::vector<std::string_view> switches{"--bare","--offline","--yes","--y","--dry-run","--debug","--auto-commit","-c","--unrestricted","--restricted","--plan","--answer-only","--setup-only","--no-idle-logout","--auto-skill","--learn","--learn-update","--project","--permissions","--settings","--traces-on","--traces-off","--login","--logout","--patch","--acp","--sdk-resume-last","--tmux","--auto-mode","--no-worktree","--interactive-on-complete","--setup","--about","--feedback","--cc","--context-compact","--no-cc","--no-context-compact","--ephemeral"};
+  for (std::size_t index=0;index<args.size();index++) {
+    const auto& argument=args[index];
+    if(std::find(unsupported.begin(),unsupported.end(),argument)!=unsupported.end()) throw SdkError(argument + " is unsupported by the current CLI; use a supported CLI option or runtime RPC instead");
+    if(std::find(switches.begin(),switches.end(),argument)==switches.end()) index++;
+  }
+}
+
 std::vector<std::string> Config::cli_args() const {
   std::vector<std::string> args{"--mode", "rpc"};
+  if (ephemeral) args.push_back("--ephemeral");
   if (bare) args.push_back("--bare");
   if (idle_logout == false) args.push_back("--no-idle-logout");
   if (unrestricted) args.push_back("--unrestricted");
   if (auto_mode) args.push_back("--auto-mode");
   if (auto_skill) args.push_back("--auto-skill");
-  if (auto_commit) args.push_back("-c");
-  if (persist_session) args.push_back("--persist-session");
-  if (resume) args.push_back("--resume");
-  if (continue_session) args.push_back("--continue");
+  if (auto_commit) args.push_back("--auto-commit");
   if (agents_md_create) args.push_back("--agents-md-create");
   if (agents_md_auto_update) args.push_back("--agents-md-auto-update");
   if (agents_md_enable == true) args.push_back("--agents-md");
@@ -1474,8 +1539,11 @@ std::vector<std::string> Config::cli_args() const {
   append_value(args, "--max-iterations", max_iterations);
   append_value(args, "--max-runtime", max_runtime_minutes);
   append_value(args, "--max-cost", max_cost);
-  append_value(args, "--session-id", session_id);
-  append_value(args, "--session-path", session_path);
+  if (!fork_session) {
+    const auto reference = session_id ? session_id : session_path;
+    if (reference) append_value(args, "--sdk-session-reference", reference);
+    else if (resume || continue_session) args.push_back("--sdk-resume-last");
+  }
   append_value(args, "--auto-save-interval", auto_save_interval);
   append_value(args, "--max-tokens", max_tokens);
   append_value(args, "--compression-threshold", compression_threshold);
@@ -1493,7 +1561,7 @@ std::vector<std::string> Config::cli_args() const {
   append_value(args, "--agents", agents);
   append_value(args, "--plugin-dir", plugin_dir);
   append_value(args, "--yolo", yolo);
-  append_value(args, "--yolo-timeout", yolo_timeout_seconds);
+  append_value(args, "--timeout", yolo_timeout_seconds);
   append_joined(args, "--skills", skills);
   append_joined(args, "--skill-sources", skill_sources);
   if (install_missing_skills) args.push_back("--install-missing-skills");
@@ -1501,8 +1569,60 @@ std::vector<std::string> Config::cli_args() const {
     args.push_back("--add-dir");
     args.push_back(dir);
   }
+  if (run_settings_json() || environment.contains("AUTOHAND_RUN_SETTINGS")) { args.push_back("--sdk-settings-version"); args.push_back("1"); }
   args.insert(args.end(), extra_args.begin(), extra_args.end());
   return args;
+}
+
+std::optional<std::string> Config::run_settings_json() const {
+  auto settings = json_object();
+  try {
+    if (run_settings) settings = parse_json_document(*run_settings);
+    if (settings.kind != JsonKind::object) throw SdkError("Invalid run settings object");
+    validate_setting_keys(settings);
+    if (feature_settings_json) {
+      auto features = parse_json_document(*feature_settings_json);
+      if (features.kind != JsonKind::object) throw SdkError("Invalid feature settings object");
+      validate_setting_keys(features);
+      if (const auto* nested = features.member("features")) {
+        if (nested->kind != JsonKind::object) throw SdkError("Invalid feature settings object");
+        auto copied = *nested;
+        features = std::move(copied);
+      }
+      auto overlay = json_object(); overlay.object["features"] = std::move(features); merge_settings(settings, overlay);
+    }
+  } catch (const SdkError&) { throw SdkError("Run settings must contain safe JSON settings objects"); }
+  if (!provider) {
+    if (api_key || base_url || autohand_ai_plan || port) throw SdkError("A provider is required for provider credentials and settings");
+  } else {
+    const auto& name = *provider;
+    auto section = json_object();
+    const auto put = [&](const std::string& key, const std::optional<std::string>& value) {
+      if (value) section.object[key] = json_string(*value);
+    };
+    put("model", model);
+    if (api_key) {
+      put(name == "vertexai" ? "authToken" : "apiKey", api_key);
+      if (name == "autohandai" || name == "openai" || name == "xai") section.object["authMode"] = json_string("api-key");
+      if (name == "azure") section.object["authMethod"] = json_string("api-key");
+      if (name == "bedrock") section.object["authMode"] = json_string("bedrock-api-key");
+    }
+    if (base_url) section.object[(name == "vertexai" || name == "bedrock") ? "endpoint" : "baseUrl"] = json_string(name == "vertexai" ? vertex_endpoint(*base_url) : *base_url);
+    else if (port && (name == "ollama" || name == "llamacpp" || name == "mlx")) section.object["baseUrl"] = json_string("http://localhost:" + std::to_string(*port));
+    if (name == "autohandai") {
+      if (autohand_ai_plan) put("plan", autohand_ai_plan);
+      else if ((api_key || base_url) && (!settings.member(name) || !settings.member(name)->member("plan"))) section.object["plan"] = json_string("cloud");
+    }
+    if (!section.object.empty()) {
+      auto overlay = json_object();
+      if (name.starts_with("custom:")) { auto providers = json_object(); providers.object[name.substr(7)] = section; overlay.object["customProviders"] = std::move(providers); }
+      else if (name.starts_with("extension:")) { auto providers = json_object(); providers.object[name] = section; overlay.object["extensionProviders"] = std::move(providers); }
+      else overlay.object[name] = section;
+      merge_settings(settings, overlay);
+    }
+  }
+  const auto needed = run_settings || feature_settings_json || (provider && *provider != "autohandai" && (api_key || base_url || port));
+  return needed ? std::optional<std::string>(serialize_json(settings)) : std::nullopt;
 }
 
 std::string GoalParams::to_json() const {
@@ -1580,8 +1700,10 @@ std::string PromptOptions::to_json(std::string_view message) const {
     out << ",\"thinkingLevel\":\"" << json_escape(*thinking_level) << "\"";
   }
   for (const auto& [key, value] : extra_json) {
+    if (key == "stopWhen" && !stop_when.empty()) continue;
     out << ",\"" << json_escape(key) << "\":" << value;
   }
+  if (!stop_when.empty()) out << ",\"stopWhen\":{\"mode\":\"host\"}";
   out << "}";
   return out.str();
 }
@@ -1658,8 +1780,109 @@ std::string SdkEvent::request_id() const {
   return id.empty() ? json_get_string(raw_json, "request_id") : id;
 }
 std::string SdkEvent::description() const { return json_get_string(raw_json, "description"); }
-std::string SdkEvent::autoresearch_phase() const { return json_get_string(raw_json, "phase"); }
+std::string SdkEvent::autoresearch_phase() const {
+  const auto phase = json_get_string(raw_json, "phase");
+  return phase.empty() ? autoresearch_phase_for_method(method) : phase;
+}
 std::string SdkEvent::autoresearch_operation() const { return json_get_string(raw_json, "operation"); }
+
+StopCondition is_step_count(int count) {
+  if (count < 1) throw SdkError("step count must be positive");
+  return [count](const StopConditionContext& context, CancellationToken) {
+    return context.steps.size() >= static_cast<std::size_t>(count);
+  };
+}
+
+StopCondition has_tool_call(std::string tool_name) {
+  const auto first = tool_name.find_first_not_of(" \t\r\n");
+  const auto last = tool_name.find_last_not_of(" \t\r\n");
+  tool_name = first == std::string::npos ? std::string{} : tool_name.substr(first, last - first + 1);
+  if (tool_name.empty()) throw SdkError("tool name must not be empty");
+  return [tool_name = std::move(tool_name)](const StopConditionContext& context, CancellationToken) {
+    if (context.steps.empty()) return false;
+    const auto& calls = context.steps.back().tool_calls;
+    return std::any_of(calls.begin(), calls.end(), [&](const auto& call) { return call.tool == tool_name; });
+  };
+}
+
+namespace {
+
+class PromptCancelled : public SdkError {
+ public:
+  PromptCancelled() : SdkError("prompt cancelled") {}
+};
+
+void check_cancelled(CancellationToken cancellation) {
+  if (cancellation.stop_requested()) throw PromptCancelled();
+}
+
+bool terminal_event(const SdkEvent& event) {
+  return event.type == "turn_end" || event.type == "agent_end";
+}
+
+StepEndEvent parse_step_end(const std::string& json) {
+  const auto root = parse_json_document(json);
+  const auto& value = required_member(root, "step", JsonKind::object);
+  const auto number = required_integer_member(value, "stepNumber");
+  if (number < 1 || number > std::numeric_limits<int>::max()) throw SdkError("invalid step number");
+  const auto optional_text = [](const JsonValue& object, const std::string& key) -> std::optional<std::string> {
+    if (!object.member(key)) return std::nullopt;
+    return required_member(object, key, JsonKind::string).scalar;
+  };
+  AgentStep step{static_cast<int>(number), optional_text(value, "thought")};
+  for (const auto& call : required_member(value, "toolCalls", JsonKind::array).array) {
+    step.tool_calls.push_back({optional_text(call, "id"), required_member(call, "tool", JsonKind::string).scalar,
+        serialize_json(required_member(call, "args", JsonKind::object))});
+  }
+  for (const auto& result : required_member(value, "toolResults", JsonKind::array).array) {
+    step.tool_results.push_back({required_member(result, "tool", JsonKind::string).scalar,
+        required_member(result, "success", JsonKind::boolean).boolean,
+        optional_text(result, "output"), optional_text(result, "error")});
+  }
+  return {required_member(root, "stepId", JsonKind::string).scalar, std::move(step),
+      required_member(root, "timestamp", JsonKind::string).scalar};
+}
+
+struct PendingStep {
+  std::string id;
+  std::vector<std::future<bool>> decisions;
+  bool stop = false;
+  std::exception_ptr failure;
+
+  bool ready() {
+    bool pending = false;
+    for (auto& decision : decisions) {
+      if (!decision.valid()) continue;
+      if (decision.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
+        pending = true;
+        continue;
+      }
+      try { stop = decision.get() || stop; }
+      catch (...) { failure = std::current_exception(); }
+    }
+    return failure || !pending;
+  }
+};
+
+PendingStep evaluate_step(const StepEndEvent& step, const std::vector<AgentStep>& steps,
+    const std::vector<StopCondition>& conditions, CancellationToken cancellation) {
+  PendingStep pending{step.step_id};
+  const auto context = std::make_shared<const StopConditionContext>(StopConditionContext{steps});
+  for (const auto& condition : conditions) {
+    std::promise<bool> result;
+    pending.decisions.push_back(result.get_future());
+    std::thread([condition, context, cancellation, result = std::move(result)]() mutable {
+      try {
+        auto decision = condition(*context, cancellation);
+        result.set_value(std::holds_alternative<bool>(decision) ? std::get<bool>(decision)
+            : std::get<std::shared_future<bool>>(decision).get());
+      } catch (...) { result.set_exception(std::current_exception()); }
+    }).detach();
+  }
+  return pending;
+}
+
+}  // namespace
 
 class AutohandSdk::Impl {
  public:
@@ -1673,6 +1896,10 @@ class AutohandSdk::Impl {
       stop();
     }
 
+    auto generated_arguments = config_.cli_args();
+    generated_arguments.resize(generated_arguments.size() - config_.extra_args.size());
+    validate_cli_arguments(generated_arguments);
+    const auto run_settings = config_.run_settings_json();
     int stdin_socket[2]{-1, -1};
     int stdout_pipe[2]{-1, -1};
     int stderr_pipe[2]{-1, -1};
@@ -1740,7 +1967,7 @@ class AutohandSdk::Impl {
       }
       setenv("AUTOHAND_STREAM_TOOL_OUTPUT", "1", 1);
       if (config_.provider == "autohandai") {
-        setenv("AUTOHAND_AI_PLAN", config_.autohand_ai_plan.value_or("cloud").c_str(), 1);
+        if (config_.autohand_ai_plan) setenv("AUTOHAND_AI_PLAN", config_.autohand_ai_plan->c_str(), 1);
         if (config_.api_key) setenv("AUTOHAND_AI_API_KEY", config_.api_key->c_str(), 1);
         if (config_.base_url) setenv("AUTOHAND_AI_BASE_URL", config_.base_url->c_str(), 1);
       }
@@ -1750,6 +1977,7 @@ class AutohandSdk::Impl {
       if (config_.provider && setenv("AUTOHAND_PROVIDER", config_.provider->c_str(), 1) != 0) {
         child_fail(errno);
       }
+      if (run_settings && setenv("AUTOHAND_RUN_SETTINGS", run_settings->c_str(), 1) != 0) child_fail(errno);
       std::vector<char*> argv;
       argv.reserve(args.size() + 1);
       for (const auto& arg : args) {
@@ -1794,9 +2022,6 @@ class AutohandSdk::Impl {
     stderr_thread_ = std::thread([this] { read_stderr(); });
     try {
       (void)request("autohand.getState", "{}");
-      if (config_.feature_settings_json) {
-        (void)request("autohand.applyFlagSettings", "{\"settings\":" + *config_.feature_settings_json + "}");
-      }
     } catch (...) {
       stop();
       throw;
@@ -1846,7 +2071,14 @@ class AutohandSdk::Impl {
 
   bool is_started() const { return started_; }
 
-  std::string request(const std::string& method, const std::string& params_json) {
+  struct PendingRequest {
+    long id;
+    std::future<std::string> response;
+  };
+
+  PendingRequest begin_request(const std::string& method, const std::string& params_json,
+      CancellationToken cancellation = {}) {
+    check_cancelled(cancellation);
     if (!started_) throw SdkError("transport has not been started");
     const auto id = next_id_++;
     auto promise = std::make_shared<std::promise<std::string>>();
@@ -1862,6 +2094,7 @@ class AutohandSdk::Impl {
     const auto line = payload.str();
     try {
       std::lock_guard lock(write_mutex_);
+      check_cancelled(cancellation);
       std::size_t written = 0;
       while (written < line.size()) {
         const auto count = send_without_sigpipe(stdin_fd_, line.data() + written, line.size() - written);
@@ -1878,12 +2111,120 @@ class AutohandSdk::Impl {
       throw;
     }
 
-    if (future.wait_for(config_.timeout) == std::future_status::timeout) {
-      std::lock_guard lock(pending_mutex_);
-      pending_.erase(id);
-      throw RequestTimeoutError(method);
+    return {id, std::move(future)};
+  }
+
+  void discard_request(long id) {
+    std::lock_guard lock(pending_mutex_);
+    pending_.erase(id);
+  }
+
+  std::string await_request(PendingRequest& call, const std::string& method,
+      CancellationToken cancellation, std::chrono::milliseconds timeout) {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    try {
+      while (call.response.wait_for(std::chrono::milliseconds(10)) != std::future_status::ready) {
+        check_cancelled(cancellation);
+        if (std::chrono::steady_clock::now() >= deadline) throw RequestTimeoutError(method);
+      }
+      check_cancelled(cancellation);
+      return call.response.get();
+    } catch (...) {
+      discard_request(call.id);
+      throw;
     }
-    return future.get();
+  }
+
+  std::string request(const std::string& method, const std::string& params_json,
+      CancellationToken cancellation = {}, std::optional<std::chrono::milliseconds> timeout = {}) {
+    auto call = begin_request(method, params_json, cancellation);
+    return await_request(call, method, cancellation, timeout.value_or(config_.timeout));
+  }
+
+  std::string execute_prompt(const std::string& message,
+      const std::function<void(const SdkEvent&)>& on_event,
+      const PromptOptions& options, CancellationToken cancellation) {
+    for (const auto& condition : options.stop_when) {
+      if (!condition) throw SdkError("stop conditions must not be empty functions");
+    }
+    std::unique_lock guard(stream_mutex_, std::defer_lock);
+    while (!guard.try_lock_for(std::chrono::milliseconds(10))) check_cancelled(cancellation);
+    check_cancelled(cancellation);
+    clear_events();
+    const auto predicates = std::make_shared<std::atomic<bool>>(false);
+    auto prompt = begin_request("autohand.prompt", options.to_json(message), cancellation);
+    bool terminal = false;
+    bool acknowledged = false;
+    std::string response;
+    std::vector<AgentStep> steps;
+    std::set<std::string> seen_steps;
+    std::optional<PendingStep> pending_step;
+    std::exception_ptr failure;
+    std::exception_ptr condition_failure;
+    auto progress = std::chrono::steady_clock::now();
+    try {
+      while (!terminal) {
+        check_cancelled(cancellation);
+        if (!acknowledged && prompt.response.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+          response = prompt.response.get();
+          acknowledged = true;
+          progress = std::chrono::steady_clock::now();
+        }
+        for (const auto& event : drain_events()) {
+          progress = std::chrono::steady_clock::now();
+          terminal = terminal || terminal_event(event);
+          if (event.method == "autohand.stepEnd" && !std::holds_alternative<StepEndEvent>(event.payload))
+            throw SdkError("malformed autohand.stepEnd notification");
+          if (const auto* step = std::get_if<StepEndEvent>(&event.payload); step && !failure) {
+            if (!seen_steps.insert(step->step_id).second) continue;
+            if (pending_step) throw SdkError("received another step before the pending step decision");
+            steps.push_back(step->step);
+            pending_step = evaluate_step(*step, steps, options.stop_when, CancellationToken(predicates));
+          }
+          if (!failure) {
+            try { on_event(event); }
+            catch (...) { failure = std::current_exception(); }
+          }
+        }
+        if (failure) std::rethrow_exception(failure);
+        if (terminal) break;
+        if (pending_step && pending_step->ready()) {
+          const auto result = parse_json_document(request("autohand.stepDecision",
+              "{\"stepId\":\"" + json_escape(pending_step->id) + "\",\"stop\":"
+                  + (pending_step->stop || pending_step->failure ? "true}" : "false}"), cancellation));
+          if (!required_member(result, "success", JsonKind::boolean).boolean)
+            throw SdkError("rejected autohand.stepDecision result");
+          condition_failure = pending_step->failure;
+          pending_step.reset();
+          progress = std::chrono::steady_clock::now();
+        }
+        if (!is_started()) throw SdkError("CLI event stream closed before prompt completion");
+        if (std::chrono::steady_clock::now() - progress >= config_.timeout) throw RequestTimeoutError("autohand.prompt");
+        wait_for_event(std::chrono::milliseconds(10));
+      }
+      if (!acknowledged) response = await_request(prompt, "autohand.prompt", cancellation, config_.timeout);
+      if (condition_failure) std::rethrow_exception(condition_failure);
+    } catch (...) {
+      const auto original = std::current_exception();
+      predicates->store(true);
+      discard_request(prompt.id);
+      if (!terminal && is_started()) {
+        try {
+          (void)request("autohand.abort", "{}", {}, std::chrono::seconds(5));
+          const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+          while (!terminal) {
+            for (const auto& event : drain_events()) terminal = terminal || terminal_event(event);
+            if (terminal) break;
+            if (!is_started() || std::chrono::steady_clock::now() >= deadline)
+              throw SdkError("prompt abort cleanup did not complete");
+            wait_for_event(std::chrono::milliseconds(10));
+          }
+        } catch (...) { stop(); }
+      }
+      std::rethrow_exception(original);
+    }
+    predicates->store(true);
+    return response;
   }
 
   void clear_events() {
@@ -1903,10 +2244,6 @@ class AutohandSdk::Impl {
     if (events_.empty()) {
       event_cv_.wait_for(lock, timeout);
     }
-  }
-
-  std::unique_lock<std::mutex> lock_stream() {
-    return std::unique_lock<std::mutex>(stream_mutex_);
   }
 
  private:
@@ -2030,7 +2367,7 @@ class AutohandSdk::Impl {
   std::thread stderr_thread_;
   std::mutex write_mutex_;
   std::mutex pending_mutex_;
-  std::mutex stream_mutex_;
+  std::timed_mutex stream_mutex_;
   std::mutex event_mutex_;
   std::condition_variable event_cv_;
   std::map<long, std::shared_ptr<std::promise<std::string>>> pending_;
@@ -2049,30 +2386,18 @@ std::string AutohandSdk::request(const std::string& method, const std::string& p
   return impl_->request(method, params_json);
 }
 std::string AutohandSdk::prompt(const std::string& message, const PromptOptions& options) {
-  return request("autohand.prompt", options.to_json(message));
+  return execute_prompt(message, [](const SdkEvent&) {}, options, {});
 }
 void AutohandSdk::stream_prompt(
     const std::string& message,
     const std::function<void(const SdkEvent&)>& on_event,
     const PromptOptions& options) {
-  auto stream_guard = impl_->lock_stream();
-  impl_->clear_events();
-  auto prompt_future = std::async(std::launch::async, [this, &message, &options] {
-    return prompt(message, options);
-  });
-
-  while (prompt_future.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
-    impl_->wait_for_event(std::chrono::milliseconds(25));
-    for (const auto& event : impl_->drain_events()) {
-      on_event(event);
-    }
-  }
-
-  for (const auto& event : impl_->drain_events()) {
-    on_event(event);
-  }
-
-  (void)prompt_future.get();
+  (void)execute_prompt(message, on_event, options, {});
+}
+std::string AutohandSdk::execute_prompt(const std::string& message,
+    const std::function<void(const SdkEvent&)>& on_event,
+    const PromptOptions& options, CancellationToken cancellation) {
+  return impl_->execute_prompt(message, on_event, options, cancellation);
 }
 std::string AutohandSdk::interrupt() { return request("autohand.abort"); }
 std::string AutohandSdk::set_plan_mode(bool enabled) {
@@ -2083,6 +2408,38 @@ std::string AutohandSdk::set_permission_mode(const std::string& mode) {
 }
 std::string AutohandSdk::set_model(const std::string& model) {
   return request("autohand.modelSet", "{\"model\":\"" + json_escape(model) + "\"}");
+}
+std::string AutohandSdk::set_browser_capabilities(int protocol_version, const std::string& extension_version, const std::vector<std::string>& tools) {
+  std::ostringstream out; bool first = true; out << "{";
+  append_json_number(out, first, "protocolVersion", protocol_version);
+  append_json_string(out, first, "extensionVersion", extension_version);
+  append_json_strings(out, first, "tools", tools);
+  out << "}";
+  return request("autohand.browserCapabilities.set", out.str());
+}
+std::string AutohandSdk::set_max_thinking_tokens(std::optional<int> max_thinking_tokens) {
+  return request("autohand.maxThinkingTokensSet", "{\"maxThinkingTokens\":" + (max_thinking_tokens ? std::to_string(*max_thinking_tokens) : "null") + "}");
+}
+std::string AutohandSdk::get_supported_models() {
+  return request("autohand.getSupportedModels", "{}");
+}
+std::string AutohandSdk::get_context_usage() {
+  return request("autohand.getContextUsage", "{}");
+}
+std::string AutohandSdk::reload_plugins() {
+  return request("autohand.reloadPlugins", "{}");
+}
+std::string AutohandSdk::get_account_info() {
+  return request("autohand.getAccountInfo", "{}");
+}
+std::string AutohandSdk::toggle_mcp_server(const std::string& server_name, bool enabled) {
+  return request("autohand.mcp.toggleServer", "{\"serverName\":\"" + json_escape(server_name) + "\",\"enabled\":" + (enabled ? "true" : "false") + "}");
+}
+std::string AutohandSdk::reconnect_mcp_server(const std::string& server_name) {
+  return request("autohand.mcp.reconnectServer", "{\"serverName\":\"" + json_escape(server_name) + "\"}");
+}
+std::string AutohandSdk::set_mcp_servers(const std::string& servers_json) {
+  return request("autohand.mcp.setServers", "{\"servers\":" + servers_json + "}");
 }
 std::string AutohandSdk::get_state() { return request("autohand.getState"); }
 std::string AutohandSdk::get_messages() { return request("autohand.getMessages"); }
@@ -2140,6 +2497,9 @@ McpGetServerConfigsResult AutohandSdk::get_mcp_server_configs() {
   return parse_mcp_configs_result(request("autohand.mcp.getServerConfigs"));
 }
 std::string AutohandSdk::get_supported_commands() { return request("autohand.getSupportedCommands"); }
+std::vector<AgentInfo> AutohandSdk::get_supported_agents() {
+  return parse_supported_agents(request("autohand.getSupportedAgents"));
+}
 bool AutohandSdk::supports_command(const std::string& command) {
   const auto normalized = format_slash_command(command);
   const auto plain = normalized.substr(1);
@@ -2450,48 +2810,63 @@ ContextCompactResult AutohandSdk::set_context_compact(bool enabled) {
       std::string("{\"enabled\":") + (enabled ? "true}" : "false}")));
 }
 
+class Run::State {
+ public:
+  std::mutex mutex;
+  std::shared_ptr<std::atomic<bool>> cancellation = std::make_shared<std::atomic<bool>>(false);
+  bool streamed = false;
+  std::exception_ptr error;
+  RunResult result;
+};
+
 Run::Run(AutohandSdk& sdk, std::string prompt, PromptOptions options)
-    : sdk_(&sdk), id_(now_id()), prompt_(std::move(prompt)), options_(std::move(options)) {}
+    : sdk_(&sdk), id_(now_id()), prompt_(std::move(prompt)), options_(std::move(options)),
+      state_(std::make_shared<State>()) {}
 
 const std::string& Run::id() const { return id_; }
 
 void Run::stream(const std::function<void(const SdkEvent&)>& on_event) {
-  if (streamed_) {
-    if (stream_error_) std::rethrow_exception(stream_error_);
+  std::lock_guard guard(state_->mutex);
+  if (state_->streamed) {
+    if (state_->error) std::rethrow_exception(state_->error);
     return;
   }
-  streamed_ = true;
-  result_.id = id_;
-  result_.status = "running";
+  state_->streamed = true;
+  auto& result = state_->result;
+  result.id = id_;
+  result.status = "running";
   try {
-    sdk_->stream_prompt(prompt_, [&](const SdkEvent& event) {
-      result_.events.push_back(event);
-      if (event.type == "message_update") result_.text += event.text_delta();
+    (void)sdk_->execute_prompt(prompt_, [&](const SdkEvent& event) {
+      result.events.push_back(event);
+      if (event.type == "message_update") result.text += event.text_delta();
       if (event.type == "message_end") {
         const auto content = event.message_content();
-        if (!content.empty()) result_.text = content;
+        if (!content.empty()) result.text = content;
+      }
+      if (const auto* step = std::get_if<StepEndEvent>(&event.payload)) result.steps.push_back(step->step);
+      if (terminal_event(event)) {
+        const auto reason = json_get_string(event.raw_json, "reason");
+        result.status = reason == "stop_condition" ? "stopped" : reason == "aborted" ? "aborted" : "completed";
       }
       on_event(event);
-    }, options_);
-    result_.status = "completed";
+    }, options_, CancellationToken(state_->cancellation));
+  } catch (const PromptCancelled&) {
+    result.status = "aborted";
   } catch (...) {
-    result_.status = "failed";
-    stream_error_ = std::current_exception();
+    result.status = "failed";
+    state_->error = std::current_exception();
     throw;
   }
 }
 
 RunResult Run::wait() {
-  if (!streamed_) {
-    stream([](const SdkEvent&) {});
-  }
-  if (stream_error_) std::rethrow_exception(stream_error_);
-  return result_;
+  stream([](const SdkEvent&) {});
+  return state_->result;
 }
 
 std::string Run::json_text() { return parse_json_text(wait().text); }
 
-void Run::abort() { (void)sdk_->interrupt(); }
+void Run::abort() { state_->cancellation->store(true); }
 
 Agent::Agent(Config config) : sdk_(std::move(config)) { sdk_.start(); }
 Run Agent::send(std::string prompt, PromptOptions options) {
@@ -2528,6 +2903,33 @@ std::string Agent::clear_goal() { return sdk_.clear_goal(); }
 std::string Agent::queue_goal(const GoalParams& params) { return sdk_.queue_goal(params); }
 std::string Agent::start_queued_goal() { return sdk_.start_queued_goal(); }
 std::string Agent::list_goal_templates() { return sdk_.list_goal_templates(); }
+std::string Agent::set_browser_capabilities(int protocol_version, const std::string& extension_version, const std::vector<std::string>& tools) {
+  return sdk_.set_browser_capabilities(protocol_version, extension_version, tools);
+}
+std::string Agent::set_max_thinking_tokens(std::optional<int> max_thinking_tokens) {
+  return sdk_.set_max_thinking_tokens(max_thinking_tokens);
+}
+std::string Agent::get_supported_models() {
+  return sdk_.get_supported_models();
+}
+std::string Agent::get_context_usage() {
+  return sdk_.get_context_usage();
+}
+std::string Agent::reload_plugins() {
+  return sdk_.reload_plugins();
+}
+std::string Agent::get_account_info() {
+  return sdk_.get_account_info();
+}
+std::string Agent::toggle_mcp_server(const std::string& server_name, bool enabled) {
+  return sdk_.toggle_mcp_server(server_name, enabled);
+}
+std::string Agent::reconnect_mcp_server(const std::string& server_name) {
+  return sdk_.reconnect_mcp_server(server_name);
+}
+std::string Agent::set_mcp_servers(const std::string& servers_json) {
+  return sdk_.set_mcp_servers(servers_json);
+}
 ResetResult Agent::reset() { return sdk_.reset(); }
 BrowserHandoffCreateResult Agent::create_browser_handoff(
     const BrowserHandoffCreateParams& params) {
@@ -2698,12 +3100,12 @@ std::string json_get_string(const std::string& json, const std::string& key) {
 }
 
 std::string event_type_from_method(const std::string& method, const std::string& params_json) {
-  const auto explicit_type = json_get_string(params_json, "type");
-  if (!explicit_type.empty()) return explicit_type;
+  (void)params_json;
   if (method == "autohand.agentStart") return "agent_start";
   if (method == "autohand.agentEnd") return "agent_end";
   if (method == "autohand.turnStart") return "turn_start";
   if (method == "autohand.turnEnd") return "turn_end";
+  if (method == "autohand.stepEnd") return "step_end";
   if (method == "autohand.messageStart") return "message_start";
   if (method == "autohand.messageUpdate") return "message_update";
   if (method == "autohand.messageEnd") return "message_end";
@@ -2735,144 +3137,188 @@ std::string event_type_from_method(const std::string& method, const std::string&
   if (method == "autohand.learn.progress") return "learn_progress";
   if (method.rfind("autohand.autoresearch.", 0) == 0) return "autoresearch";
   if (method == "autohand.error") return "error";
+  if (method == "autohand.ping") return "ping";
+  if (method == "autohand.peerUpdate") return "peer_update";
+  if (method == "autohand.resourceUpdate") return "resource_update";
+  if (method == "autohand.directoryAccessRequest") return "directory_access_request";
+  if (method == "autohand.changesBatchStart") return "changes_batch_start";
+  if (method == "autohand.changesBatchUpdate") return "changes_batch_update";
+  if (method == "autohand.changesBatchEnd") return "changes_batch_end";
+  if (method == "autohand.hook.programStatus") return "hook_program_status";
+  if (method == "autohand.hook.rateLimit") return "hook_rate_limit";
+  if (method == "autohand.hook.computerUseStart") return "hook_computer_use_start";
+  if (method == "autohand.hook.computerUseProgress") return "hook_computer_use_progress";
+  if (method == "autohand.hook.computerUseError") return "hook_computer_use_error";
+  if (method == "autohand.hook.computerUseStop") return "hook_computer_use_stop";
+  if (method == "autohand.hook.subagentStart") return "hook_subagent_start";
+  if (method == "autohand.hook.subagentProgress") return "hook_subagent_progress";
+  if (method == "autohand.hook.subagentMessage") return "hook_subagent_message";
+  if (method == "autohand.hook.subagentCancelRequested") return "hook_subagent_cancel_requested";
+  if (method == "autohand.hook.reviewStart") return "hook_review_start";
+  if (method == "autohand.hook.reviewEnd") return "hook_review_end";
+  if (method == "autohand.hook.reviewPaused") return "hook_review_paused";
+  if (method == "autohand.hook.reviewFailed") return "hook_review_failed";
+  if (method == "autohand.hook.reviewCompleted") return "hook_review_completed";
+  if (method == "autohand.automode.start") return "automode_start";
+  if (method == "autohand.automode.checkpoint") return "automode_checkpoint";
+  if (method == "autohand.automode.pause") return "automode_pause";
+  if (method == "autohand.automode.resume") return "automode_resume";
+  if (method == "autohand.automode.cancel") return "automode_cancel";
+  if (method == "autohand.modeChange") return "mode_change";
+  if (method == "autohand.pipe.output") return "pipe_output";
+  if (method == "autohand.pipe.complete") return "pipe_complete";
+  if (method == "autohand.pipe.error") return "pipe_error";
+  if (method == "autohand.learn.installComplete") return "learn_install_complete";
+  if (method == "autohand.learn.securityWarning") return "learn_security_warning";
+  if (method == "autohand.schedule.triggered") return "schedule_triggered";
+  if (method == "autohand.setup.started") return "setup_started";
+  if (method == "autohand.setup.stepStart") return "setup_step_start";
+  if (method == "autohand.setup.stepComplete") return "setup_step_complete";
+  if (method == "autohand.setup.cancelled") return "setup_cancelled";
+  if (method == "autohand.setup.error") return "setup_error";
+  if (method == "autohand.setup.complete") return "setup_complete";
   constexpr std::string_view prefix = "autohand.";
   if (method.rfind(prefix, 0) == 0) return method.substr(prefix.size());
   return method;
 }
 
-SdkEvent sdk_event_from_notification(const std::string& method, const std::string& params_json) {
-  auto normalized_params = params_json;
-  const auto phase = autoresearch_phase_for_method(method);
-  if (!phase.empty() && json_get_string(params_json, "phase").empty()) {
-    if (params_json == "{}" || params_json.empty()) {
-      normalized_params = "{\"phase\":\"" + phase + "\"}";
-    } else if (params_json.front() == '{') {
-      normalized_params = "{\"phase\":\"" + phase + "\"," + params_json.substr(1);
-    }
+static SdkEvent decode_notification(const std::string& method, const std::string& params_json) {
+  if (method == "autohand.stepEnd") {
+    try { return SdkEvent{"step_end", params_json, parse_step_end(params_json), method}; }
+    catch (const SdkError&) { return SdkEvent{"step_end", params_json, std::monostate{}, method}; }
   }
   if (method == "autohand.automode.iteration") {
     return SdkEvent{
         "automode_iteration",
-        normalized_params,
-        parse_automode_iteration_event(normalized_params)};
+        params_json,
+        parse_automode_iteration_event(params_json), method};
   }
   if (method == "autohand.automode.complete") {
     return SdkEvent{
-        "automode_complete", normalized_params,
-        parse_automode_complete_event(normalized_params)};
+        "automode_complete", params_json,
+        parse_automode_complete_event(params_json), method};
   }
   if (method == "autohand.automode.error") {
     return SdkEvent{
-        "automode_error", normalized_params,
-        parse_automode_error_event(normalized_params)};
+        "automode_error", params_json,
+        parse_automode_error_event(params_json), method};
   }
   try {
     if (method == "autohand.hook.preTool") {
       return SdkEvent{
-          "hook_pre_tool", normalized_params,
-          parse_pre_tool_hook_event(normalized_params), method};
+          "hook_pre_tool", params_json,
+          parse_pre_tool_hook_event(params_json), method};
     }
     if (method == "autohand.hook.postTool") {
       return SdkEvent{
-          "hook_post_tool", normalized_params,
-          parse_post_tool_hook_event(normalized_params), method};
+          "hook_post_tool", params_json,
+          parse_post_tool_hook_event(params_json), method};
     }
     if (method == "autohand.hook.fileModified") {
       return SdkEvent{
-          "file_modified", normalized_params,
-          parse_file_modified_hook_event(normalized_params), method};
+          "file_modified", params_json,
+          parse_file_modified_hook_event(params_json), method};
     }
     if (method == "autohand.hook.prePrompt") {
       return SdkEvent{
-          "hook_pre_prompt", normalized_params,
-          parse_pre_prompt_hook_event(normalized_params), method};
+          "hook_pre_prompt", params_json,
+          parse_pre_prompt_hook_event(params_json), method};
     }
     if (method == "autohand.hook.postResponse") {
       return SdkEvent{
-          "hook_post_response", normalized_params,
-          parse_post_response_hook_event(normalized_params), method};
+          "hook_post_response", params_json,
+          parse_post_response_hook_event(params_json), method};
     }
     if (method == "autohand.hook.sessionError") {
       return SdkEvent{
-          "hook_session_error", normalized_params,
-          parse_session_error_hook_event(normalized_params), method};
+          "hook_session_error", params_json,
+          parse_session_error_hook_event(params_json), method};
     }
     if (method == "autohand.hook.stop") {
       return SdkEvent{
-          "hook_stop", normalized_params,
-          parse_stop_hook_event(normalized_params), method};
+          "hook_stop", params_json,
+          parse_stop_hook_event(params_json), method};
     }
     if (method == "autohand.hook.sessionStart") {
       return SdkEvent{
-          "hook_session_start", normalized_params,
-          parse_session_start_hook_event(normalized_params), method};
+          "hook_session_start", params_json,
+          parse_session_start_hook_event(params_json), method};
     }
     if (method == "autohand.hook.sessionEnd") {
       return SdkEvent{
-          "hook_session_end", normalized_params,
-          parse_session_end_hook_event(normalized_params), method};
+          "hook_session_end", params_json,
+          parse_session_end_hook_event(params_json), method};
     }
     if (method == "autohand.hook.subagentStop") {
       return SdkEvent{
-          "hook_subagent_stop", normalized_params,
-          parse_subagent_stop_hook_event(normalized_params), method};
+          "hook_subagent_stop", params_json,
+          parse_subagent_stop_hook_event(params_json), method};
     }
     if (method == "autohand.hook.permissionRequest") {
       return SdkEvent{
-          "hook_permission_request", normalized_params,
-          parse_permission_request_hook_event(normalized_params), method};
+          "hook_permission_request", params_json,
+          parse_permission_request_hook_event(params_json), method};
     }
     if (method == "autohand.hook.notification") {
       return SdkEvent{
-          "hook_notification", normalized_params,
-          parse_notification_hook_event(normalized_params), method};
+          "hook_notification", params_json,
+          parse_notification_hook_event(params_json), method};
     }
     if (method == "autohand.hook.contextCompacted") {
       return SdkEvent{
-          "hook_context_compacted", normalized_params,
-          parse_context_compacted_hook_event(normalized_params), method};
+          "hook_context_compacted", params_json,
+          parse_context_compacted_hook_event(params_json), method};
     }
     if (method == "autohand.hook.contextOverflow") {
       return SdkEvent{
-          "hook_context_overflow", normalized_params,
-          parse_context_overflow_hook_event(normalized_params), method};
+          "hook_context_overflow", params_json,
+          parse_context_overflow_hook_event(params_json), method};
     }
     if (method == "autohand.hook.contextWarning") {
       return SdkEvent{
-          "hook_context_warning", normalized_params,
-          parse_context_warning_hook_event(normalized_params), method};
+          "hook_context_warning", params_json,
+          parse_context_warning_hook_event(params_json), method};
     }
     if (method == "autohand.hook.contextCritical") {
       return SdkEvent{
-          "hook_context_critical", normalized_params,
-          parse_context_critical_hook_event(normalized_params), method};
+          "hook_context_critical", params_json,
+          parse_context_critical_hook_event(params_json), method};
     }
   } catch (const SdkError&) {
     if (is_known_hook_method(method)) {
       return SdkEvent{
-          event_type_from_method(method, normalized_params), normalized_params,
+          event_type_from_method(method, params_json), params_json,
           std::monostate{}, method};
     }
     throw;
   }
   if (method == "autohand.mcp.invokeRequest") {
     return SdkEvent{
-        "mcp_invoke_request", normalized_params,
-        parse_mcp_invocation_request_event(normalized_params)};
+        "mcp_invoke_request", params_json,
+        parse_mcp_invocation_request_event(params_json), method};
   }
   if (method == "autohand.mcp.toolsChanged") {
     return SdkEvent{
-        "mcp_tools_changed", normalized_params,
-        parse_mcp_tools_changed_event(normalized_params)};
+        "mcp_tools_changed", params_json,
+        parse_mcp_tools_changed_event(params_json), method};
   }
   if (method == "autohand.learn.progress") {
     return SdkEvent{
-        "learn_progress", normalized_params,
-        parse_learning_progress_event(normalized_params)};
+        "learn_progress", params_json,
+        parse_learning_progress_event(params_json), method};
   }
   return SdkEvent{
-      event_type_from_method(method, normalized_params), normalized_params,
+      event_type_from_method(method, params_json), params_json,
       std::monostate{}, method};
+}
+
+SdkEvent sdk_event_from_notification(const std::string& method, const std::string& params_json) {
+  try {
+    return decode_notification(method, params_json);
+  } catch (const SdkError&) {
+    // A newer or malformed typed payload must remain visible to callers.
+    return SdkEvent{event_type_from_method(method, params_json), params_json, std::monostate{}, method};
+  }
 }
 
 }  // namespace autohand

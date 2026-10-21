@@ -24,6 +24,7 @@ Use it when you want Autohand inside native developer tools, editors, desktop ap
 - Typed event helpers for message deltas, tools, permissions, and errors
 - Typed decoding for all 16 CLI hook notifications, with exact raw fallback for unknown or malformed payloads
 - High-level `Agent` and `Run` workflow
+- Host stop conditions, persisted tool steps, and same-session continuation
 - Low-level `AutohandSdk` control methods
 - Slash-command helpers, persistent goals, and the replayable autoresearch ledger
 - Structured JSON extraction helper
@@ -207,6 +208,7 @@ Live examples require an authenticated Autohand CLI and may ask for tool permiss
 - [API Reference](./docs/API_REFERENCE.md)
 - [Configuration](./docs/configuration.md)
 - [Event Streaming](./docs/event-streaming.md)
+- [Step Control](./docs/step-control.md)
 - [Permissions](./docs/permissions.md)
 - [Plan Mode](./docs/plan-mode.md)
 - [SDLC Workflows](./docs/sdlc-workflows.md)
@@ -246,3 +248,5 @@ The transport tests use a deterministic fake CLI, so the unit suite does not req
 - SDK docs: https://autohand.ai/docs/agent-sdk/
 - Issues: https://github.com/autohandai/code-agent-sdk-cpp/issues
 - Security reports: security@autohand.ai
+
+See [CLI compatibility and migration notes](docs/cli-compatibility.md) for this unreleased source revision, including provider startup settings, complete notifications and ephemeral sessions.

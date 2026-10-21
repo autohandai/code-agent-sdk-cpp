@@ -6,6 +6,7 @@ The C++ SDK is a C++20 wrapper around the Autohand CLI JSON-RPC mode.
 - [API Reference](./API_REFERENCE.md)
 - [Configuration](./configuration.md)
 - [Event Streaming](./event-streaming.md)
+- [Step Control](./step-control.md)
 - [Permissions](./permissions.md)
 - [Plan Mode](./plan-mode.md)
 - [SDLC Workflows](./sdlc-workflows.md)

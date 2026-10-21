@@ -38,6 +38,7 @@ while IFS= read -r line; do
       printf '{"jsonrpc":"2.0","id":%s,"result":{"ok":true}}\n' "$permission_id"
       printf '%s\n' '{"jsonrpc":"2.0","method":"autohand.messageUpdate","params":{"type":"message_update","delta":"hello"}}'
       printf '%s\n' '{"jsonrpc":"2.0","method":"autohand.messageEnd","params":{"type":"message_end","content":"hello"}}'
+      printf '%s\n' '{"jsonrpc":"2.0","method":"autohand.turnEnd","params":{"reason":"completed","timestamp":"now"}}'
       printf '{"jsonrpc":"2.0","id":%s,"result":{"ok":true}}\n' "$prompt_id"
       ;;
     *autohand.getSupportedCommands*)
@@ -144,12 +145,16 @@ int run_fixture(std::string_view mode) {
       std::cout << "{\"jsonrpc\":\"2.0\",\"method\":\"autohand.messageUpdate\","
                    "\"params\":{\"type\":\"message_update\",\"delta\":\"stream-"
                 << stream_count << "\"}}\n"
+                << R"({"jsonrpc":"2.0","method":"autohand.turnEnd","params":{"reason":"completed","timestamp":"now"}})" << '\n'
                 << "{\"jsonrpc\":\"2.0\",\"id\":" << id
                 << ",\"result\":{\"ok\":true}}\n"
                 << std::flush;
       continue;
     }
     if (mode == "eof" && method != "autohand.getState") return 0;
+    if (method == "autohand.abort") {
+      std::cout << R"({"jsonrpc":"2.0","method":"autohand.turnEnd","params":{"reason":"aborted","timestamp":"now"}})" << '\n';
+    }
     std::cout << " { \"jsonrpc\" : \"2.0\", \"id\" : " << id
               << ", \"result\" : { \"ready\" : true, \"method\" : \""
               << autohand::json_escape(method) << "\", \"unicode\" : \"\\uD83D\\uDE80\" } } \n"
@@ -280,6 +285,22 @@ void test_startup_budgets(const std::string& executable) {
 }  // namespace
 
 int main(int argc, char** argv) {
+  const std::string pipe_payload = R"({"type":"progress","future":{"value":false}})";
+  const auto pipe_packet = autohand::sdk_event_from_notification("autohand.pipe.output", pipe_payload);
+  assert(pipe_packet.type == "pipe_output");
+  assert(pipe_packet.method == "autohand.pipe.output");
+  assert(pipe_packet.raw_json == pipe_payload);
+  for (const auto& payload : {std::string("null"), std::string("[1,null,false]")}) {
+    const auto packet = autohand::sdk_event_from_notification("autohand.future", payload);
+    assert(packet.method == "autohand.future");
+    assert(packet.raw_json == payload);
+  }
+  for (const auto& method : {"autohand.mcp.invokeRequest", "autohand.learn.progress", "autohand.automode.iteration"}) {
+    const auto packet = autohand::sdk_event_from_notification(method, "{}");
+    assert(packet.method == method);
+    assert(packet.raw_json == "{}");
+  }
+
   (void)argc;
   if (const auto* mode = std::getenv("AUTOHAND_CPP_TEST_FIXTURE")) return run_fixture(mode);
   if (std::getenv("AUTOHAND_CPP_PUBLIC_IMPORT_PROBE")) {
@@ -305,7 +326,6 @@ int main(int argc, char** argv) {
 
   auto config = autohand::Config::from_environment()
                     .with_cli_path(make_fake_cli().string())
-                    .with_skill("cpp")
                     .with_model("moa");
   auto args = config.cli_args();
   assert(!args.empty());
@@ -341,8 +361,8 @@ int main(int argc, char** argv) {
   assert(has_arg("--display-language"));
   assert(has_arg("--mcp-config"));
   assert(has_arg("--plugin-dir"));
-  assert(has_arg("--persist-session"));
-  assert(has_arg("--resume"));
+  assert(!has_arg("--persist-session"));
+  assert(!has_arg("--resume"));
   assert(has_arg("--agents-md"));
   assert(has_arg("--agents-md-create"));
   assert(has_arg("--agents-md-auto-update"));
@@ -493,6 +513,7 @@ int main(int argc, char** argv) {
   const auto lifecycle_event = autohand::sdk_event_from_notification(
       "autohand.autoresearch.status", R"({"active":true,"runsLogged":3})");
   assert(lifecycle_event.type == "autoresearch");
+  assert(lifecycle_event.raw_json == R"({"active":true,"runsLogged":3})");
   assert(lifecycle_event.autoresearch_phase() == "status");
   const auto operation_event = autohand::sdk_event_from_notification(
       "autohand.autoresearch.event", R"({"operation":"replay","phase":"complete"})");
@@ -578,12 +599,12 @@ int main(int argc, char** argv) {
     std::vector<std::string> second_events;
     std::thread first([&] {
       stream_sdk.stream_prompt("first", [&](const autohand::SdkEvent& event) {
-        first_events.push_back(event.text_delta());
+        if (event.type == "message_update") first_events.push_back(event.text_delta());
       });
     });
     std::thread second([&] {
       stream_sdk.stream_prompt("second", [&](const autohand::SdkEvent& event) {
-        second_events.push_back(event.text_delta());
+        if (event.type == "message_update") second_events.push_back(event.text_delta());
       });
     });
     first.join();
