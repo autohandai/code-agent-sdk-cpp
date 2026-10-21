@@ -435,14 +435,11 @@ void test_automode_iteration_events(const std::string& executable) {
   assert(unknown.raw_json == R"({"value":1})");
   assert(std::holds_alternative<std::monostate>(unknown.payload));
 
-  bool rejected = false;
-  try {
-    (void)autohand::sdk_event_from_notification(
-        "autohand.automode.iteration", R"({"sessionId":"missing-fields"})");
-  } catch (const autohand::SdkError&) {
-    rejected = true;
-  }
-  assert(rejected);
+  const auto malformed = autohand::sdk_event_from_notification(
+      "autohand.automode.iteration", R"({"sessionId":"missing-fields"})");
+  assert(malformed.method == "autohand.automode.iteration");
+  assert(malformed.raw_json == R"({"sessionId":"missing-fields"})");
+  assert(std::holds_alternative<std::monostate>(malformed.payload));
 
   Fixture malformed_fixture(
       executable,
@@ -454,7 +451,9 @@ void test_automode_iteration_events(const std::string& executable) {
       "continue", [&](const auto& event) { malformed_events.push_back(event); });
   assert(malformed_events.size() == 2);
   assert(malformed_events.back().type == "turn_end");
-  assert(malformed_events.front().type == "error");
+  assert(malformed_events.front().type == "automode_iteration");
+  assert(malformed_events.front().method == "autohand.automode.iteration");
+  assert(malformed_events.front().raw_json == R"({"sessionId":"missing-fields"})");
   assert(std::holds_alternative<std::monostate>(malformed_events.front().payload));
 }
 
@@ -751,15 +750,12 @@ void test_learning_progress_events(const std::string& executable) {
   assert(progress->status == autohand::LearningProgressStatus::LoadingRegistry);
   assert(progress->timestamp == "2026-07-21T00:09:00Z");
 
-  bool rejected = false;
-  try {
-    (void)autohand::sdk_event_from_notification(
-        "autohand.learn.progress",
-        R"({"status":"unknown","timestamp":"2026-07-21T00:09:00Z"})");
-  } catch (const autohand::SdkError&) {
-    rejected = true;
-  }
-  assert(rejected);
+  const auto malformed = autohand::sdk_event_from_notification(
+      "autohand.learn.progress",
+      R"({"status":"unknown","timestamp":"2026-07-21T00:09:00Z"})");
+  assert(malformed.method == "autohand.learn.progress");
+  assert(malformed.raw_json == R"({"status":"unknown","timestamp":"2026-07-21T00:09:00Z"})");
+  assert(std::holds_alternative<std::monostate>(malformed.payload));
 }
 
 }  // namespace

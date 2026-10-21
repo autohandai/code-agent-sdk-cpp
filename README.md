@@ -244,3 +244,5 @@ The transport tests use a deterministic fake CLI, so the unit suite does not req
 - SDK docs: https://autohand.ai/docs/agent-sdk/
 - Issues: https://github.com/autohandai/code-agent-sdk-cpp/issues
 - Security reports: security@autohand.ai
+
+See [CLI compatibility and migration notes](docs/cli-compatibility.md) for this unreleased source revision, including provider startup settings, complete notifications and ephemeral sessions.

@@ -17,6 +17,7 @@ def main():
         return
     requests = []
     failures = []
+    auth_requests = []
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_):
@@ -31,7 +32,9 @@ def main():
         def respond(self):
             try:
                 if self.path == "/auth/me":
-                    assert self.headers["Authorization"] == "Bearer session-token"
+                    token = self.headers["Authorization"]
+                    auth_requests.append(token)
+                    assert token in ("Bearer session-token", "Bearer inference-key")
                     response = {"authenticated": True, "user": {"id": "cpp-sdk", "email": "sdk@example.test"}}
                 else:
                     assert self.path == "/v1/chat/completions", self.path
@@ -88,6 +91,7 @@ def main():
                     "AUTOHAND_CPP_HARNESS_WORKSPACE": str(workspace),
                     "AUTOHAND_CPP_HARNESS_HOME": str(home), "AUTOHAND_CPP_HARNESS_CONFIG": str(config)}
                 subprocess.run([sys.argv[1]], env=environment, check=True, timeout=60)
+                assert auth_requests[0] == "Bearer session-token", auth_requests
                 assert not failures, failures
                 assert len(requests) == 2, len(requests)
                 assert "cpp-persisted-marker" in json.dumps(requests[1]["messages"])

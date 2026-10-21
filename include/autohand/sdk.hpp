@@ -63,6 +63,10 @@ struct Config {
   bool agents_md_create = false;
   std::optional<std::string> agents_md_path;
   bool agents_md_auto_update = false;
+  // Keep this run out of session history and synchronization.
+  bool ephemeral = false;
+  // Legacy compatibility; use ephemeral to disable persistence.
+  // Legacy compatibility field; use ephemeral to disable persistence.
   bool persist_session = false;
   std::optional<std::string> session_id;
   bool resume = false;
@@ -87,6 +91,9 @@ struct Config {
   std::optional<std::string> agents;
   std::optional<std::string> plugin_dir;
   std::optional<std::string> feature_settings_json;
+  // Native CLI provider, feature and session-awareness JSON for this process only.
+  std::optional<std::string> run_settings;
+  std::optional<int> port;
   std::optional<std::string> yolo;
   std::optional<int> yolo_timeout_seconds;
   std::vector<std::string> additional_directories;
@@ -107,6 +114,7 @@ struct Config {
   Config& with_skill(std::string value);
   Config& with_instructions(std::string value);
   std::vector<std::string> cli_args() const;
+  std::optional<std::string> run_settings_json() const;
 };
 
 struct GoalParams {
@@ -938,6 +946,24 @@ class AutohandSdk {
   McpListServersResult list_mcp_servers();
   McpListToolsResult list_mcp_tools(const McpListToolsParams& params = {});
   McpGetServerConfigsResult get_mcp_server_configs();
+  /// Calls the corresponding ordinary CLI runtime control.
+  std::string set_browser_capabilities(int protocol_version, const std::string& extension_version, const std::vector<std::string>& tools);
+  /// Calls the corresponding ordinary CLI runtime control.
+  std::string set_max_thinking_tokens(std::optional<int> max_thinking_tokens);
+  /// Calls the corresponding ordinary CLI runtime control.
+  std::string get_supported_models();
+  /// Calls the corresponding ordinary CLI runtime control.
+  std::string get_context_usage();
+  /// Calls the corresponding ordinary CLI runtime control.
+  std::string reload_plugins();
+  /// Calls the corresponding ordinary CLI runtime control.
+  std::string get_account_info();
+  /// Calls the corresponding ordinary CLI runtime control.
+  std::string toggle_mcp_server(const std::string& server_name, bool enabled);
+  /// Calls the corresponding ordinary CLI runtime control.
+  std::string reconnect_mcp_server(const std::string& server_name);
+  /// Calls the corresponding ordinary CLI runtime control.
+  std::string set_mcp_servers(const std::string& servers_json);
   std::string get_supported_commands();
   std::vector<AgentInfo> get_supported_agents();
   bool supports_command(const std::string& command);
@@ -1037,6 +1063,15 @@ class Agent {
   std::string queue_goal(const GoalParams& params);
   std::string start_queued_goal();
   std::string list_goal_templates();
+  std::string set_browser_capabilities(int protocol_version, const std::string& extension_version, const std::vector<std::string>& tools);
+  std::string set_max_thinking_tokens(std::optional<int> max_thinking_tokens);
+  std::string get_supported_models();
+  std::string get_context_usage();
+  std::string reload_plugins();
+  std::string get_account_info();
+  std::string toggle_mcp_server(const std::string& server_name, bool enabled);
+  std::string reconnect_mcp_server(const std::string& server_name);
+  std::string set_mcp_servers(const std::string& servers_json);
   ResetResult reset();
   BrowserHandoffCreateResult create_browser_handoff(
       const BrowserHandoffCreateParams& params = {});

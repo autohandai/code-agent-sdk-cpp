@@ -285,6 +285,22 @@ void test_startup_budgets(const std::string& executable) {
 }  // namespace
 
 int main(int argc, char** argv) {
+  const std::string pipe_payload = R"({"type":"progress","future":{"value":false}})";
+  const auto pipe_packet = autohand::sdk_event_from_notification("autohand.pipe.output", pipe_payload);
+  assert(pipe_packet.type == "pipe_output");
+  assert(pipe_packet.method == "autohand.pipe.output");
+  assert(pipe_packet.raw_json == pipe_payload);
+  for (const auto& payload : {std::string("null"), std::string("[1,null,false]")}) {
+    const auto packet = autohand::sdk_event_from_notification("autohand.future", payload);
+    assert(packet.method == "autohand.future");
+    assert(packet.raw_json == payload);
+  }
+  for (const auto& method : {"autohand.mcp.invokeRequest", "autohand.learn.progress", "autohand.automode.iteration"}) {
+    const auto packet = autohand::sdk_event_from_notification(method, "{}");
+    assert(packet.method == method);
+    assert(packet.raw_json == "{}");
+  }
+
   (void)argc;
   if (const auto* mode = std::getenv("AUTOHAND_CPP_TEST_FIXTURE")) return run_fixture(mode);
   if (std::getenv("AUTOHAND_CPP_PUBLIC_IMPORT_PROBE")) {
@@ -310,7 +326,6 @@ int main(int argc, char** argv) {
 
   auto config = autohand::Config::from_environment()
                     .with_cli_path(make_fake_cli().string())
-                    .with_skill("cpp")
                     .with_model("moa");
   auto args = config.cli_args();
   assert(!args.empty());
@@ -346,8 +361,8 @@ int main(int argc, char** argv) {
   assert(has_arg("--display-language"));
   assert(has_arg("--mcp-config"));
   assert(has_arg("--plugin-dir"));
-  assert(has_arg("--persist-session"));
-  assert(has_arg("--resume"));
+  assert(!has_arg("--persist-session"));
+  assert(!has_arg("--resume"));
   assert(has_arg("--agents-md"));
   assert(has_arg("--agents-md-create"));
   assert(has_arg("--agents-md-auto-update"));
@@ -498,6 +513,7 @@ int main(int argc, char** argv) {
   const auto lifecycle_event = autohand::sdk_event_from_notification(
       "autohand.autoresearch.status", R"({"active":true,"runsLogged":3})");
   assert(lifecycle_event.type == "autoresearch");
+  assert(lifecycle_event.raw_json == R"({"active":true,"runsLogged":3})");
   assert(lifecycle_event.autoresearch_phase() == "status");
   const auto operation_event = autohand::sdk_event_from_notification(
       "autohand.autoresearch.event", R"({"operation":"replay","phase":"complete"})");
