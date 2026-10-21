@@ -4,6 +4,10 @@
 #include <iostream>
 
 int main() {
+ { autohand::Config config; config.auto_commit=true; const auto args=config.cli_args();
+   assert(std::find(args.begin(),args.end(),"--auto-commit")!=args.end());
+   assert(std::find(args.begin(),args.end(),"-c")==args.end()); }
+
  {autohand::Config config; auto args=config.cli_args(); assert(std::find(args.begin(),args.end(),"--ephemeral")==args.end());
  config.ephemeral=true; args=config.cli_args(); assert(std::find(args.begin(),args.end(),"--ephemeral")!=args.end());}
 

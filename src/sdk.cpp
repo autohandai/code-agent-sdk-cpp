@@ -1529,7 +1529,7 @@ std::vector<std::string> Config::cli_args() const {
   if (unrestricted) args.push_back("--unrestricted");
   if (auto_mode) args.push_back("--auto-mode");
   if (auto_skill) args.push_back("--auto-skill");
-  if (auto_commit) args.push_back("-c");
+  if (auto_commit) args.push_back("--auto-commit");
   if (agents_md_create) args.push_back("--agents-md-create");
   if (agents_md_auto_update) args.push_back("--agents-md-auto-update");
   if (agents_md_enable == true) args.push_back("--agents-md");
