@@ -62,4 +62,4 @@ install(TARGETS autohand_sdk EXPORT AutohandSdkTargets)
 install(DIRECTORY include/ DESTINATION include)
 install(EXPORT AutohandSdkTargets NAMESPACE autohand:: DESTINATION lib/cmake/AutohandSdk)
 
-install(FILES LICENSE COMMERCIAL.md DESTINATION share/licenses/autohand_code_agent_sdk_cpp)
+install(FILES LICENSE DESTINATION share/licenses/autohand_code_agent_sdk_cpp)
